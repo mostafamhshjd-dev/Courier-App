@@ -1,0 +1,8 @@
+{
+  "name": "WebStack Courier",
+  "description": "تطبيق مناديب الشحن والتوصيل لنظام WebStack مع تتبع GPS حي، خريطة ذكية، إدارة العهدة النقدية وباركود المرتجعات.",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera"
+  ]
+}

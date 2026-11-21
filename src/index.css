@@ -1,0 +1,192 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --ws-surface: #F8FAFC;
+  --ws-surface-dim: #F1F5F9;
+  --ws-surface-lowest: #FFFFFF;
+  --ws-surface-low: #FFFFFF;
+  --ws-surface-container: #F1F5F9;
+  --ws-surface-high: #E2E8F0;
+  --ws-surface-highest: #CBD5E1;
+  --ws-surface-bright: #E2E8F0;
+  --ws-on-surface: #0F172A;
+  --ws-on-surface-variant: #475569;
+  --ws-outline: #64748B;
+  --ws-outline-variant: #CBD5E1;
+  --ws-primary: #059669;
+  --ws-primary-fixed: #10B981;
+  --ws-primary-container: #047857;
+  --ws-on-primary: #FFFFFF;
+  --ws-secondary: #D97706;
+  --ws-secondary-fixed: #B45309;
+  --ws-secondary-container: #F59E0B;
+  --ws-on-secondary: #FFFFFF;
+  --ws-tertiary: #DC2626;
+  --ws-tertiary-container: #EF4444;
+  --ws-on-tertiary-container: #FFFFFF;
+  --ws-error: #DC2626;
+  --ws-error-container: #FEE2E2;
+}
+
+.dark {
+  --ws-surface: #0F172A;
+  --ws-surface-dim: #0B1326;
+  --ws-surface-lowest: #070E1D;
+  --ws-surface-low: #131E33;
+  --ws-surface-container: #182338;
+  --ws-surface-high: #1E293B;
+  --ws-surface-highest: #28354C;
+  --ws-surface-bright: #334155;
+  --ws-on-surface: #F1F5F9;
+  --ws-on-surface-variant: #94A3B8;
+  --ws-outline: #64748B;
+  --ws-outline-variant: #334155;
+  --ws-primary: #10B981;
+  --ws-primary-fixed: #34D399;
+  --ws-primary-container: #059669;
+  --ws-on-primary: #022C22;
+  --ws-secondary: #F59E0B;
+  --ws-secondary-fixed: #FCD34D;
+  --ws-secondary-container: #D97706;
+  --ws-on-secondary: #2A1700;
+  --ws-tertiary: #F87171;
+  --ws-tertiary-container: #EF4444;
+  --ws-on-tertiary-container: #FFFFFF;
+  --ws-error: #FCA5A5;
+  --ws-error-container: #7F1D1D;
+}
+
+@theme {
+  --color-surface: var(--ws-surface);
+  --color-surface-dim: var(--ws-surface-dim);
+  --color-surface-container-lowest: var(--ws-surface-lowest);
+  --color-surface-container-low: var(--ws-surface-low);
+  --color-surface-container: var(--ws-surface-container);
+  --color-surface-container-high: var(--ws-surface-high);
+  --color-surface-container-highest: var(--ws-surface-highest);
+  --color-surface-bright: var(--ws-surface-bright);
+  --color-on-surface: var(--ws-on-surface);
+  --color-on-surface-variant: var(--ws-on-surface-variant);
+  --color-outline: var(--ws-outline);
+  --color-outline-variant: var(--ws-outline-variant);
+  --color-primary: var(--ws-primary);
+  --color-primary-fixed: var(--ws-primary-fixed);
+  --color-primary-container: var(--ws-primary-container);
+  --color-on-primary: var(--ws-on-primary);
+  --color-secondary: var(--ws-secondary);
+  --color-secondary-fixed: var(--ws-secondary-fixed);
+  --color-secondary-container: var(--ws-secondary-container);
+  --color-on-secondary: var(--ws-on-secondary);
+  --color-tertiary: var(--ws-tertiary);
+  --color-tertiary-container: var(--ws-tertiary-container);
+  --color-on-tertiary-container: var(--ws-on-tertiary-container);
+  --color-error: var(--ws-error);
+  --color-error-container: var(--ws-error-container);
+
+  --font-sans: "Cairo", "Tajawal", "Manrope", system-ui, sans-serif;
+  --font-display: "Outfit", "Cairo", "Tajawal", system-ui, sans-serif;
+  --font-telemetry: "Outfit", "Cairo", monospace;
+}
+
+@layer base {
+  html,
+  body {
+    width: 100%;
+    min-height: 100dvh;
+    margin: 0;
+    padding: 0;
+    background-color: var(--ws-surface);
+    color: var(--ws-on-surface);
+    font-family: "Cairo", "Tajawal", "Manrope", system-ui, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+
+  html[dir="ltr"] body {
+    font-family: "Manrope", "Cairo", system-ui, sans-serif;
+  }
+
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+/* Leaflet map overrides for clean mobile dark/light cockpit presentation */
+.leaflet-container {
+  background: var(--ws-surface-lowest) !important;
+  font-family: "Cairo", "Outfit", sans-serif !important;
+  z-index: 1;
+}
+
+.leaflet-control-attribution {
+  font-size: 9px !important;
+  opacity: 0.45;
+  background: rgba(15, 23, 42, 0.55) !important;
+  color: #94a3b8 !important;
+}
+
+.leaflet-control-attribution a {
+  color: #94a3b8 !important;
+}
+
+.ws-courier-pin-wrapper,
+.ws-shipment-pin-wrapper {
+  background: transparent !important;
+  border: none !important;
+}
+
+@keyframes ws-pulse-ring {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.8;
+  }
+  70% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+.ws-pulse-ring {
+  animation: ws-pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+@keyframes ws-slide-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0.5;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-up {
+  animation: ws-slide-up 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-pulse-ring,
+  .animate-slide-up {
+    animation: none !important;
+  }
+}
