@@ -70,10 +70,9 @@ jobs:
           ./gradlew assembleDebug
 
       - name: Copy built APK into dist
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk dist/webstack-courier.apk
-
-      - name: Setup GitHub Pages
-        uses: actions/configure-pages@v5
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/webstack-courier.apk
+          touch dist/.nojekyll
 
       - name: Upload dist artifact for GitHub Pages
         uses: actions/upload-pages-artifact@v3
