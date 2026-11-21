@@ -50,6 +50,9 @@ jobs:
           fi
           npx cap sync android
 
+      - name: Generate Android Launcher Icons & Splash from WebStack Logo
+        run: npx capacitor-assets generate --android --iconBackgroundColor '#FFFFFF' --iconBackgroundColorDark '#FFFFFF' --splashBackgroundColor '#FFFFFF' --splashBackgroundColorDark '#0F172A'
+
       - name: Ensure GPS & Internet permissions in AndroidManifest.xml
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
