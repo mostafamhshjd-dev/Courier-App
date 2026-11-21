@@ -81,18 +81,29 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Prepare GitHub Pages root as 2-button Download Page
+      - name: Prepare GitHub Pages download folder (pages-dist)
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/webstack-courier.apk
-          mv dist/index.html dist/app.html
-          cp dist/download.html dist/index.html
-          touch dist/.nojekyll
+          rm -rf pages-dist
+          mkdir -p pages-dist
+          cp dist/download.html pages-dist/index.html
+          cp dist/download.html pages-dist/download.html
+          cp dist/webstack-logo.png pages-dist/webstack-logo.png
+          if [ -f dist/manifest.json ]; then cp dist/manifest.json pages-dist/manifest.json; fi
+          cp android/app/build/outputs/apk/debug/app-debug.apk pages-dist/webstack-courier.apk
+          touch pages-dist/.nojekyll
+          ls -la pages-dist
 
-      - name: Upload dist artifact for GitHub Pages
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          name: github-pages
+          path: pages-dist
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages
