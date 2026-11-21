@@ -69,9 +69,11 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Copy built APK into dist
+      - name: Prepare GitHub Pages root as 2-button Download Page
         run: |
           cp android/app/build/outputs/apk/debug/app-debug.apk dist/webstack-courier.apk
+          mv dist/index.html dist/app.html
+          cp dist/download.html dist/index.html
           touch dist/.nojekyll
 
       - name: Upload dist artifact for GitHub Pages

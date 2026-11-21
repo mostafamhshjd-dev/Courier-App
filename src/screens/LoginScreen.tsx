@@ -23,14 +23,12 @@ interface LoginScreenProps {
   lang: Language;
   onToggleLanguage: (lang: Language) => void;
   onLoginSubmit: (identifier: string, password: string) => Promise<void>;
-  onDemoLogin: () => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   lang,
   onToggleLanguage,
   onLoginSubmit,
-  onDemoLogin,
 }) => {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -218,7 +216,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             </div>
 
             {/* Primary Login Trigger */}
-            <div className="pt-3 w-full space-y-2.5">
+            <div className="pt-3 w-full">
               <button
                 type="submit"
                 disabled={loading}
@@ -235,14 +233,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     <LogIn className="w-5 h-5" />
                   </>
                 )}
-              </button>
-
-              <button
-                type="button"
-                onClick={onDemoLogin}
-                className="w-full min-h-[44px] py-2.5 px-4 rounded-full bg-surface-container-low hover:bg-surface-container-high border border-outline-variant/35 text-on-surface-variant hover:text-on-surface text-xs font-semibold transition-colors cursor-pointer"
-              >
-                {t(lang, 'demoPreviewBtn')}
               </button>
             </div>
           </form>

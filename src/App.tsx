@@ -3,7 +3,6 @@ import {
   clearAuthSession,
   getAuthToken,
   getStoredCourier,
-  isDemoSession,
   saveAuthSession,
   setUnauthorizedHandler,
   STORAGE_KEYS,
@@ -86,7 +85,6 @@ export default function App() {
   });
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => Boolean(getAuthToken()));
-  const [isDemo, setIsDemo] = useState<boolean>(() => isDemoSession());
   const [courier, setCourier] = useState<CourierProfile>(() => getStoredCourier() || DEMO_COURIER);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('tasks');
@@ -107,8 +105,22 @@ export default function App() {
     }
   });
 
-  const [tasks, setTasks] = useState<ShipmentTask[]>(DEMO_TASKS);
-  const [custody, setCustody] = useState<CustodySummary>(DEMO_CUSTODY);
+  const [tasks, setTasks] = useState<ShipmentTask[]>([]);
+  const [custody, setCustody] = useState<CustodySummary>({
+    totalCodCash: 0,
+    shiftLabelAr: 'الوردية الحالية',
+    shiftLabelEn: 'Current Shift',
+    successfulOrders: 0,
+    electronicPaidAmount: 0,
+    shippingFeesAmount: 0,
+    deadlineTimeAr: '07:00 م',
+    deadlineTimeEn: '07:00 PM',
+    masterBarcode: 'MASTER-EOD',
+    shiftNumber: '--',
+    lastUpdatedAr: 'جاري التحديث...',
+    lastUpdatedEn: 'Syncing...',
+    pendingParcels: [],
+  });
   const [tasksLoading, setTasksLoading] = useState(false);
   const [custodyLoading, setCustodyLoading] = useState(false);
 
@@ -167,7 +179,6 @@ export default function App() {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setIsAuthenticated(false);
-      setIsDemo(false);
       setSelectedShipment(null);
       setOutcomeTarget(null);
       notify(t(lang, 'sessionExpired'), 'error');
@@ -177,7 +188,6 @@ export default function App() {
 
   // Fetch tasks from GET /courier/tasks.php
   const loadTasks = useCallback(async () => {
-    if (isDemo) return;
     setTasksLoading(true);
     try {
       const raw = await webstackApi.getTasks();
@@ -203,11 +213,10 @@ export default function App() {
     } finally {
       setTasksLoading(false);
     }
-  }, [isDemo, lang, notify]);
+  }, [lang, notify]);
 
   // Fetch custody from GET /courier/custody.php
   const loadCustody = useCallback(async () => {
-    if (isDemo) return;
     setCustodyLoading(true);
     try {
       const raw = await webstackApi.getCustody();
@@ -222,19 +231,14 @@ export default function App() {
     } finally {
       setCustodyLoading(false);
     }
-  }, [isDemo, lang, notify]);
+  }, [lang, notify]);
 
   // Load initial data after sign in
   useEffect(() => {
     if (!isAuthenticated) return;
-    if (isDemo) {
-      setTasks(DEMO_TASKS);
-      setCustody(DEMO_CUSTODY);
-      return;
-    }
     loadTasks();
     loadCustody();
-  }, [isAuthenticated, isDemo, loadTasks, loadCustody]);
+  }, [isAuthenticated, loadTasks, loadCustody]);
 
   // Live GPS Watch + periodic POST /courier/location.php when shiftActive is ON
   useEffect(() => {
@@ -242,7 +246,7 @@ export default function App() {
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) return;
 
     const sendCoordsIfDue = (pt: GeoPoint) => {
-      if (!shiftActive || isDemo) return;
+      if (!shiftActive) return;
       const now = Date.now();
       if (now - lastLocationSyncRef.current < 20000) return;
       lastLocationSyncRef.current = now;
@@ -287,7 +291,7 @@ export default function App() {
     return () => {
       navigator.geolocation.clearWatch(watchId);
     };
-  }, [isAuthenticated, shiftActive, isDemo]);
+  }, [isAuthenticated, shiftActive]);
 
   // Login Handler -> POST /auth/login.php
   const handleLoginSubmit = async (identifier: string, password: string) => {
@@ -302,7 +306,6 @@ export default function App() {
     }
     saveAuthSession(token, profile, false);
     setCourier(profile);
-    setIsDemo(false);
     setIsAuthenticated(true);
     setActiveTab('tasks');
     notify(
@@ -311,34 +314,15 @@ export default function App() {
     );
   };
 
-  const handleDemoLogin = () => {
-    saveAuthSession('demo-preview-token', DEMO_COURIER, true);
-    setCourier(DEMO_COURIER);
-    setTasks(DEMO_TASKS);
-    setCustody(DEMO_CUSTODY);
-    setIsDemo(true);
-    setIsAuthenticated(true);
-    setActiveTab('tasks');
-    notify(
-      lang === 'ar'
-        ? 'تم تفعيل وضع المعاينة التجريبي بجميع الشاشات'
-        : 'Interactive demo preview activated',
-      'info'
-    );
-  };
-
   // Logout Handler -> POST /auth/logout.php
   const handleLogout = async () => {
-    if (!isDemo) {
-      try {
-        await webstackApi.logout();
-      } catch {
-        // Proceed with local sign-out even if offline
-      }
+    try {
+      await webstackApi.logout();
+    } catch {
+      // Proceed with local sign-out even if offline
     }
     clearAuthSession();
     setIsAuthenticated(false);
-    setIsDemo(false);
     setSelectedShipment(null);
     setOutcomeTarget(null);
     setActiveTab('tasks');
@@ -352,7 +336,7 @@ export default function App() {
       } catch {
         // ignore
       }
-      if (next && !isDemo) {
+      if (next) {
         webstackApi
           .sendLocation({
             lat: courierLocation.lat,
@@ -393,7 +377,6 @@ export default function App() {
   // Open Shipment Details -> calls GET /courier/shipment_details.php
   const handleOpenShipmentDetails = async (shipment: ShipmentTask) => {
     setSelectedShipment(shipment);
-    if (isDemo) return;
     setDetailsLoading(true);
     try {
       const raw = await webstackApi.getShipmentDetails(shipment.id, shipment.trackingNumber);
@@ -413,9 +396,7 @@ export default function App() {
   const handleOutcomeSubmit = async (payload: OutcomeSubmissionPayload) => {
     setOutcomeSubmitting(true);
     try {
-      if (!isDemo) {
-        await webstackApi.updateShipmentStatus(payload as unknown as Record<string, unknown>);
-      }
+      await webstackApi.updateShipmentStatus(payload as unknown as Record<string, unknown>);
 
       // Optimistically update local tasks & custody state
       setTasks((prev) =>
@@ -491,10 +472,8 @@ export default function App() {
       setOutcomeTarget(null);
       setSelectedShipment(null);
 
-      if (!isDemo) {
-        loadTasks();
-        loadCustody();
-      }
+      loadTasks();
+      loadCustody();
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -516,7 +495,6 @@ export default function App() {
           lang={lang}
           onToggleLanguage={setLang}
           onLoginSubmit={handleLoginSubmit}
-          onDemoLogin={handleDemoLogin}
         />
       </>
     );
@@ -543,7 +521,6 @@ export default function App() {
         courier={courier}
         lang={lang}
         shiftActive={shiftActive}
-        isDemo={isDemo}
         showBack={Boolean(selectedShipment)}
         onBack={() => setSelectedShipment(null)}
         onAvatarClick={() => {
