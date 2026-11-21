@@ -2,7 +2,7 @@
   "name": "WebStack Courier",
   "short_name": "WebStack",
   "description": "تطبيق مناديب الشحن والتوصيل لنظام WebStack",
-  "start_url": "./app.html",
+  "start_url": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0F172A",

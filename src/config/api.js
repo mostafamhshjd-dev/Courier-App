@@ -1,7 +1,7 @@
 // WebStack Courier API Configuration & Authenticated Request Helper
 
 export const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL || 'https://shipping-system.codix.uk/api/v1'
+  import.meta.env.VITE_API_BASE_URL || '/api/v1'
 ).replace(/\/+$/, '');
 
 export const STORAGE_KEYS = {
@@ -118,6 +118,7 @@ export async function apiRequest(endpoint, options = {}) {
   }
 
   const response = await fetch(url, {
+    credentials: 'same-origin',
     ...rest,
     headers,
     body: isFormData

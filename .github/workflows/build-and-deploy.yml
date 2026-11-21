@@ -43,6 +43,15 @@ jobs:
       - name: Build web assets
         run: npm run build
 
+      - name: Deploy web app to InfinityFree via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./dist/
+          server-dir: /htdocs/courier-app/
+
       - name: Prepare Capacitor Android project
         run: |
           if [ ! -d "android" ]; then

@@ -3,6 +3,7 @@
   "appName": "WebStack Courier",
   "webDir": "dist",
   "server": {
+    "url": "https://shipping-system.codix.uk/courier-app/",
     "androidScheme": "https"
   }
 }
