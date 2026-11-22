@@ -115,6 +115,7 @@ export async function apiRequest(endpoint, options = {}) {
     const cleanToken = rawToken ? rawToken.replace(/^Bearer\s+/i, '').trim() : '';
     if (cleanToken) {
       headers.Authorization = `Bearer ${cleanToken}`;
+      headers['X-Auth-Token'] = cleanToken;
     }
   }
 
@@ -257,6 +258,7 @@ export const webstackApi = {
         action: 'confirm_pickup',
         status: 'picked_up',
         status_id: 5,
+        received_via: payload?.received_via || 'manual',
         ...payload,
       },
     }),

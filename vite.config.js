@@ -20,6 +20,7 @@ export default defineConfig({
           'vendor-leaflet': ['leaflet'],
           'vendor-icons': ['lucide-react'],
           'vendor-barcode': ['jsbarcode', 'qrcode.react'],
+          'vendor-scanner': ['html5-qrcode'],
         },
       },
     },

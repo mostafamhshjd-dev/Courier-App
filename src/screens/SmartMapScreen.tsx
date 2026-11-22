@@ -13,6 +13,7 @@ import {
   Package,
   Phone,
   Sparkles,
+  Store,
   User,
   X,
 } from 'lucide-react';
@@ -31,6 +32,8 @@ interface SmartMapScreenProps {
   gpsIsLive: boolean;
   lang: Language;
   theme: ThemeMode;
+  focusedTaskId?: string | null;
+  onClearFocusedTask?: () => void;
   onOpenShipmentDetails: (shipment: ShipmentTask) => void;
   onOpenOutcomeDirect: (shipment: ShipmentTask) => void;
   onNotify: (message: string, variant?: 'success' | 'info' | 'error') => void;
@@ -55,12 +58,23 @@ function computeBearingDeg(lat1: number, lng1: number, lat2: number, lng2: numbe
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
   tasks,
   courierLocation,
   gpsIsLive,
   lang,
   theme,
+  focusedTaskId = null,
+  onClearFocusedTask,
   onOpenShipmentDetails,
   onOpenOutcomeDirect,
   onNotify,
@@ -87,13 +101,15 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
   const activeCourierPos = navGpsPoint || courierLocation;
   const isNavigating = navigatingShipmentId !== null;
 
-  // 1. Filter delivery shipments with valid coordinates & sort ascending by Haversine distance
+  // 1. Filter delivery shipments & active merchant pickups with valid coordinates, sorted ascending by Haversine distance
   const rankedShipments = useMemo(() => {
     return tasks
       .filter(
         (item) =>
-          item.category === 'delivery' &&
+          (item.category === 'delivery' || item.category === 'pickup') &&
           item.status !== 'delivered' &&
+          item.statusId !== 8 &&
+          item.statusId !== 6 &&
           typeof item.lat === 'number' &&
           typeof item.lng === 'number' &&
           !Number.isNaN(item.lat) &&
@@ -114,6 +130,28 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
         rank: idx + 1,
       }));
   }, [tasks, activeCourierPos.lat, activeCourierPos.lng]);
+
+  // Honor external focus request (e.g., tapping "فتح اللوكيشن على الخريطة" from a Pickup Batch)
+  useEffect(() => {
+    if (!focusedTaskId) return;
+    const target = rankedShipments.find((r) => r.shipment.id === focusedTaskId);
+    if (target) {
+      setSelectionMode('manual');
+      setManualShipmentId(target.shipment.id);
+      if (mapInstanceRef.current && target.shipment.lat !== null && target.shipment.lng !== null) {
+        mapInstanceRef.current.flyTo([target.shipment.lat, target.shipment.lng], 15, {
+          duration: 0.7,
+        });
+        window.setTimeout(() => {
+          const marker = shipmentMarkersRef.current.get(target.shipment.id);
+          if (marker && target.shipment.category === 'pickup') {
+            marker.openPopup();
+          }
+        }, 450);
+      }
+    }
+    onClearFocusedTask?.();
+  }, [focusedTaskId, rankedShipments, onClearFocusedTask]);
 
   // Resolve currently focused shipment
   const selectedEntry = useMemo(() => {
@@ -179,7 +217,7 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 3. Swap dark/light CartoDB tile layer seamlessly with theme
+  // 3. Free keyless OpenStreetMap tiles (never requires an API key)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -188,15 +226,9 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
       map.removeLayer(tileLayerRef.current);
     }
 
-    const tileUrl =
-      theme === 'dark'
-        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-        : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
-
-    tileLayerRef.current = L.tileLayer(tileUrl, {
-      subdomains: 'abcd',
+    tileLayerRef.current = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      attribution: '&copy; OpenStreetMap &copy; CARTO',
+      attribution: '&copy; OpenStreetMap contributors',
     }).addTo(map);
   }, [theme]);
 
@@ -391,14 +423,40 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
 
     visibleEntries.forEach(({ shipment, rank, distanceKm }) => {
       const isSelected = selectedEntry?.shipment.id === shipment.id;
+      const isPickup = shipment.category === 'pickup';
       const distText = formatDistance(distanceKm, lang);
-      const codTag =
-        shipment.codAmount > 0 && !shipment.isPrepaid
+      const pickupCount =
+        shipment.shipmentsCount ?? shipment.batchShipments?.length ?? shipment.itemsCount ?? 1;
+      const codTag = isPickup
+        ? `${pickupCount} ${t(lang, 'shipmentUnit')}`
+        : shipment.codAmount > 0 && !shipment.isPrepaid
           ? `${shipment.codAmount} ${t(lang, 'currency')}`
           : t(lang, 'prepaid');
 
-      const pinHtml = isSelected
+      const pinHtml = isPickup
         ? `
+          <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-86%);">
+            <div style="position:relative;display:flex;align-items:center;justify-content:center;">
+              ${isSelected ? '<div class="ws-pulse-ring" style="position:absolute;width:52px;height:52px;border-radius:9999px;background:rgba(245,158,11,0.4);"></div>' : ''}
+              <div style="position:relative;width:${isSelected ? 40 : 34}px;height:${isSelected ? 40 : 34}px;border-radius:12px;background:${isSelected ? '#F59E0B' : '#0F172A'};color:${isSelected ? '#1F1300' : '#F59E0B'};border:2.5px solid ${isSelected ? '#0B1326' : '#F59E0B'};box-shadow:0 6px 18px rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/>
+                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+                  <path d="M15 22v-4a2 2 0 0 0-2-2h-2a2 2 0 0 0-2 2v4"/>
+                  <path d="M2 7h20"/>
+                </svg>
+              </div>
+              <span style="position:absolute;top:-7px;right:-7px;min-width:19px;height:19px;padding:0 4px;border-radius:9999px;background:#10B981;color:#022C22;font-family:Outfit,Cairo,sans-serif;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;border:2px solid #0F172A;">
+                ${pickupCount}
+              </span>
+            </div>
+            <div style="margin-top:3px;padding:2px 8px;border-radius:9999px;background:rgba(15,23,42,0.94);border:1px solid rgba(245,158,11,0.65);color:#FCD34D;font-family:Cairo,sans-serif;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.45);">
+              ${escapeHtml(shipment.merchantName || shipment.customerName)}
+            </div>
+          </div>
+        `
+        : isSelected
+          ? `
           <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-82%);">
             <div style="position:relative;display:flex;align-items:center;justify-content:center;">
               <div class="ws-pulse-ring" style="position:absolute;width:48px;height:48px;border-radius:9999px;background:rgba(245,158,11,0.35);"></div>
@@ -412,13 +470,13 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
             </div>
           </div>
         `
-        : `
+          : `
           <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-78%);">
             <div style="width:30px;height:30px;border-radius:9999px;background:#1E293B;color:#F8FAFC;border:2px solid #10B981;box-shadow:0 4px 12px rgba(0,0,0,0.45);font-family:Outfit,Cairo,sans-serif;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;">
               ${rank}
             </div>
             <div style="margin-top:2px;padding:1px 6px;border-radius:9999px;background:rgba(15,23,42,0.85);border:1px solid rgba(148,163,184,0.3);color:#CBD5E1;font-size:9px;font-weight:600;white-space:nowrap;">
-              ${shipment.district || `#${rank}`}
+              ${escapeHtml(shipment.district || `#${rank}`)}
             </div>
           </div>
         `;
@@ -432,13 +490,39 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
 
       const marker = L.marker([shipment.lat as number, shipment.lng as number], {
         icon,
-        zIndexOffset: isSelected ? 700 : 300 - rank,
+        zIndexOffset: isSelected ? 700 : isPickup ? 450 : 300 - rank,
       }).addTo(map);
+
+      if (isPickup) {
+        const googleMapsHref = buildGoogleMapsUrl(shipment.lat, shipment.lng, shipment.address);
+        const popupHtml = `
+          <div dir="${lang === 'ar' ? 'rtl' : 'ltr'}" style="min-width:210px;font-family:Cairo,system-ui,sans-serif;color:#0F172A;padding:2px 0;">
+            <div style="font-size:11px;font-weight:700;color:#D97706;margin-bottom:2px;">
+              ${escapeHtml(t(lang, 'merchantPinLabel'))} • ${pickupCount} ${escapeHtml(t(lang, 'shipmentUnit'))}
+            </div>
+            <div style="font-size:14px;font-weight:800;margin-bottom:4px;">
+              ${escapeHtml(shipment.merchantName || shipment.customerName)}
+            </div>
+            ${
+              shipment.address
+                ? `<div style="font-size:12px;color:#475569;line-height:1.45;margin-bottom:8px;">${escapeHtml(shipment.address)}</div>`
+                : ''
+            }
+            <a href="${escapeHtml(googleMapsHref)}" target="_blank" rel="noopener noreferrer" style="display:block;text-align:center;padding:8px 10px;border-radius:10px;background:#10B981;color:#022C22;font-size:12px;font-weight:800;text-decoration:none;">
+              ${escapeHtml(t(lang, 'navigateGoogleMaps'))}
+            </a>
+          </div>
+        `;
+        marker.bindPopup(popupHtml, { offset: [0, -28] });
+      }
 
       marker.on('click', () => {
         if (isNavigating) return;
         setSelectionMode('manual');
         setManualShipmentId(shipment.id);
+        if (isPickup) {
+          marker.openPopup();
+        }
       });
 
       shipmentMarkersRef.current.set(shipment.id, marker);
@@ -814,13 +898,19 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
               </div>
             </div>
 
-            {/* Customer + Address + COD Pill */}
+            {/* Merchant / Customer + Address + Count/COD Card */}
             <div className="flex items-start justify-between gap-3 py-3">
               <div className="flex flex-col min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  <User className="w-4 h-4 text-primary shrink-0" />
+                  {selectedEntry.shipment.category === 'pickup' ? (
+                    <Store className="w-4 h-4 text-secondary shrink-0" />
+                  ) : (
+                    <User className="w-4 h-4 text-primary shrink-0" />
+                  )}
                   <h2 className="font-display text-base font-bold text-on-surface truncate">
-                    {selectedEntry.shipment.customerName}
+                    {selectedEntry.shipment.category === 'pickup'
+                      ? selectedEntry.shipment.merchantName || selectedEntry.shipment.customerName
+                      : selectedEntry.shipment.customerName}
                   </h2>
                 </div>
                 <p className="text-xs text-on-surface-variant mt-1 leading-snug flex items-start gap-1">
@@ -829,7 +919,24 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
                 </p>
               </div>
 
-              {selectedEntry.shipment.isPrepaid || selectedEntry.shipment.codAmount <= 0 ? (
+              {selectedEntry.shipment.category === 'pickup' ? (
+                <div className="flex flex-col items-end shrink-0 bg-secondary/15 border border-secondary/35 px-3 py-1.5 rounded-xl">
+                  <span className="text-[10px] font-bold text-secondary">
+                    {t(lang, 'merchantPinLabel')}
+                  </span>
+                  <div className="flex items-baseline gap-1 mt-0.5">
+                    <span className="font-telemetry text-lg font-extrabold text-secondary leading-none tabular-nums">
+                      {selectedEntry.shipment.shipmentsCount ??
+                        selectedEntry.shipment.batchShipments?.length ??
+                        selectedEntry.shipment.itemsCount ??
+                        1}
+                    </span>
+                    <span className="text-[10px] font-bold text-secondary">
+                      {t(lang, 'shipmentUnit')}
+                    </span>
+                  </div>
+                </div>
+              ) : selectedEntry.shipment.isPrepaid || selectedEntry.shipment.codAmount <= 0 ? (
                 <div className="flex flex-col items-end shrink-0 bg-primary/15 border border-primary/30 px-3 py-1.5 rounded-xl">
                   <span className="text-[10px] font-bold text-primary">
                     {t(lang, 'prepaid')}
@@ -854,16 +961,32 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
               )}
             </div>
 
-            {/* 3 Action Buttons: Start In-App Live Navigation, Shipment Details, Call */}
+            {/* Action Buttons: Google Maps / In-App Nav, Details/Receive Batch, Call */}
             <div className="flex items-center gap-2 pt-0.5">
-              <button
-                type="button"
-                onClick={handleStartNavigation}
-                className="flex-1 min-h-[48px] px-3 rounded-xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-sm font-bold flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(16,185,129,0.3)] active:scale-[0.98] transition cursor-pointer"
-              >
-                <Navigation className="w-4 h-4 shrink-0" />
-                <span className="truncate">{t(lang, 'startNavigation')}</span>
-              </button>
+              {selectedEntry.shipment.category === 'pickup' ? (
+                <a
+                  href={buildGoogleMapsUrl(
+                    selectedEntry.shipment.lat,
+                    selectedEntry.shipment.lng,
+                    selectedEntry.shipment.address
+                  )}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 min-h-[48px] px-3 rounded-xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(16,185,129,0.3)] active:scale-[0.98] transition"
+                >
+                  <ExternalLink className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{t(lang, 'navigateGoogleMaps')}</span>
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStartNavigation}
+                  className="flex-1 min-h-[48px] px-3 rounded-xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-sm font-bold flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(16,185,129,0.3)] active:scale-[0.98] transition cursor-pointer"
+                >
+                  <Navigation className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{t(lang, 'startNavigation')}</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -871,7 +994,11 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
                 className="min-h-[48px] px-3.5 rounded-xl bg-surface-container-low hover:bg-surface-bright border border-outline-variant/35 text-on-surface text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer shrink-0"
               >
                 <Package className="w-4 h-4 text-on-surface-variant shrink-0" />
-                <span>{t(lang, 'shipmentDetailsBtn')}</span>
+                <span>
+                  {selectedEntry.shipment.category === 'pickup'
+                    ? t(lang, 'reviewAndReceiveBatch')
+                    : t(lang, 'shipmentDetailsBtn')}
+                </span>
               </button>
 
               <a

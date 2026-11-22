@@ -27,6 +27,18 @@ export interface CourierProfile {
   dispatcherPhone: string;
 }
 
+export interface PickupWaybillItem {
+  id: string;
+  trackingNumber: string;
+  pieces: number;
+  itemsSummary: string;
+  notes?: string;
+  statusId?: number | null;
+  status?: string;
+  received?: boolean;
+  receivedVia?: 'qr' | 'manual';
+}
+
 export interface ShipmentTask {
   id: string;
   trackingNumber: string;
@@ -38,6 +50,8 @@ export interface ShipmentTask {
   batchId?: string;
   batchCode?: string;
   shipmentsCount?: number;
+  batchShipments?: PickupWaybillItem[];
+  receivedVia?: 'qr' | 'manual';
   priority?: 'urgent' | 'high_value' | 'normal';
   timeWindow?: string;
   customerName: string;
@@ -61,7 +75,7 @@ export interface ShipmentTask {
 export interface CustodyParcel {
   id: string;
   trackingNumber: string;
-  type: 'partial_return' | 'postponed' | 'full_return';
+  type: 'partial_return' | 'postponed' | 'full_return' | 'pickup_in_custody';
   typeLabelAr: string;
   typeLabelEn: string;
   summaryAr: string;

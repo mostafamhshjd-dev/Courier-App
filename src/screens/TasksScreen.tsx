@@ -40,12 +40,11 @@ interface TasksScreenProps {
   courierLocation: GeoPoint;
   shiftActive: boolean;
   loading: boolean;
-  confirmingPickupId?: string | null;
   lang: Language;
   onToggleShift: () => void;
   onRefresh: () => void;
   onSelectShipment: (shipment: ShipmentTask) => void;
-  onConfirmPickup: (shipment: ShipmentTask) => void;
+  onOpenOnMap: (shipment: ShipmentTask) => void;
 }
 
 function isPickupInCustody(item: ShipmentTask): boolean {
@@ -72,12 +71,11 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   courierLocation,
   shiftActive,
   loading,
-  confirmingPickupId = null,
   lang,
   onToggleShift,
   onRefresh,
   onSelectShipment,
-  onConfirmPickup,
+  onOpenOnMap,
 }) => {
   const [activeCategory, setActiveCategory] = useState<TaskCategory>('delivery');
   const userPickedTabRef = useRef(false);
@@ -346,11 +344,11 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
           {filteredTasks.map(({ item, distKm }, idx) => {
             const isPickup = item.category === 'pickup';
             const pickedUp = isPickup && isPickupInCustody(item);
-            const isConfirming = confirmingPickupId === item.id;
             const isFirst = idx === 0 && activeCategory === 'delivery';
             const mapsUrl = buildGoogleMapsUrl(item.lat, item.lng, item.address);
             const whatsappUrl = formatWhatsAppUrl(item.customerPhone);
-            const pickupCount = item.shipmentsCount ?? item.itemsCount ?? 1;
+            const waybills = item.batchShipments || [];
+            const pickupCount = Math.max(item.shipmentsCount ?? 0, waybills.length, item.itemsCount ?? 1);
 
             return (
               <article
@@ -361,7 +359,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                     : 'border-outline-variant/25 hover:border-primary/40'
                 }`}
               >
-                {/* Clickable Top Section -> Opens Shipment Details */}
+                {/* Clickable Top Section -> Opens Pickup Batch or Shipment Details */}
                 <div
                   role="button"
                   tabIndex={0}
@@ -403,10 +401,9 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                               <Clock className="w-3.5 h-3.5" />
                             )}
                             <span>
-                              {item.statusLabel ||
-                                (pickedUp
-                                  ? t(lang, 'pickupStatusInCustody')
-                                  : t(lang, 'pickupStatusAwaiting'))}
+                              {pickedUp
+                                ? t(lang, 'pickupStatusInCustody')
+                                : item.statusLabel || t(lang, 'pickupStatusAwaiting')}
                             </span>
                           </span>
                         </>
@@ -444,16 +441,26 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                     )}
                   </div>
 
-                  {/* Merchant / Customer Name & Address */}
+                  {/* Merchant / Customer Name & Phone & Address */}
                   <div className="space-y-1">
-                    <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2">
-                      {isPickup ? (
-                        <Store className="w-4 h-4 text-secondary shrink-0" />
-                      ) : (
-                        <User className="w-4 h-4 text-primary shrink-0" />
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2 min-w-0">
+                        {isPickup ? (
+                          <Store className="w-4 h-4 text-secondary shrink-0" />
+                        ) : (
+                          <User className="w-4 h-4 text-primary shrink-0" />
+                        )}
+                        <span className="truncate">{item.customerName}</span>
+                      </h3>
+                      {isPickup && item.customerPhone && (
+                        <span
+                          dir="ltr"
+                          className="font-telemetry text-[11px] font-semibold text-on-surface-variant shrink-0 tabular-nums"
+                        >
+                          {item.customerPhone}
+                        </span>
                       )}
-                      <span className="truncate">{item.customerName}</span>
-                    </h3>
+                    </div>
                     {item.address && (
                       <p className="text-xs sm:text-sm text-on-surface-variant flex items-start gap-1.5 leading-relaxed">
                         <MapPin className="w-4 h-4 text-outline shrink-0 mt-0.5" />
@@ -462,18 +469,53 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                     )}
                   </div>
 
-                  {/* Pickup Summary OR COD / Prepaid Strip */}
+                  {/* Pickup Expected Count & Waybill Preview OR COD / Prepaid Strip */}
                   {isPickup ? (
-                    <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-surface-container border border-outline-variant/20">
-                      <div className="flex items-center gap-2 text-secondary text-xs font-bold">
-                        <Package className="w-4 h-4 shrink-0" />
-                        <span className="tabular-nums">
-                          {t(lang, 'pickupShipmentsCount', { count: pickupCount })}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-surface-container border border-outline-variant/20">
+                        <div className="flex items-center gap-2 text-secondary text-xs font-bold">
+                          <Package className="w-4 h-4 shrink-0" />
+                          <span className="tabular-nums">
+                            {t(lang, 'expectedShipmentsLabel')}: {pickupCount}
+                          </span>
+                        </div>
+                        <span className="text-[11px] font-semibold text-primary whitespace-nowrap">
+                          {t(lang, 'reviewAndReceiveBatch')}
                         </span>
                       </div>
-                      <span className="text-[11px] font-semibold text-primary whitespace-nowrap">
-                        {t(lang, 'shipmentDetailsBtn')}
-                      </span>
+
+                      {waybills.length > 0 && (
+                        <div className="rounded-xl bg-surface-container-lowest/70 border border-outline-variant/20 divide-y divide-outline-variant/15">
+                          {waybills.slice(0, 3).map((w) => (
+                            <div
+                              key={w.id + '-' + w.trackingNumber}
+                              className="px-3 py-2 flex items-center justify-between gap-2 text-[11px]"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <span
+                                  dir="ltr"
+                                  className="font-telemetry font-bold text-on-surface tabular-nums"
+                                >
+                                  #{w.trackingNumber}
+                                </span>
+                                <span className="text-on-surface-variant mx-1.5">·</span>
+                                <span className="text-on-surface-variant truncate">
+                                  {w.notes || w.itemsSummary}
+                                </span>
+                              </div>
+                              <span className="text-secondary font-bold shrink-0 tabular-nums">
+                                {w.pieces} {t(lang, 'pieceUnit')}
+                              </span>
+                            </div>
+                          ))}
+                          {waybills.length > 3 && (
+                            <div className="px-3 py-1.5 text-[11px] font-bold text-primary text-center">
+                              +{waybills.length - 3}{' '}
+                              {lang === 'ar' ? 'بوالص أخرى — اضغط للمراجعة الكاملة' : 'more waybills — tap to review'}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-surface-container border border-outline-variant/20">
@@ -498,32 +540,26 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                   )}
                 </div>
 
-                {/* Direct Confirm Pickup CTA for Pickup Orders & Batches */}
+                {/* Pickup Primary Action: Open Full Review/QR/Manual Receive Screen */}
                 {isPickup && (
-                  <div>
+                  <div className="flex flex-col gap-2">
                     {pickedUp ? (
-                      <div className="w-full min-h-[44px] px-3 py-2 rounded-xl bg-primary/12 border border-primary/30 text-primary text-xs font-bold flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onSelectShipment(item)}
+                        className="w-full min-h-[46px] px-3 py-2 rounded-xl bg-primary/12 border border-primary/35 text-primary text-xs font-bold flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer"
+                      >
                         <PackageCheck className="w-4 h-4 shrink-0" />
                         <span>{t(lang, 'pickupConfirmedBadge')}</span>
-                      </div>
+                      </button>
                     ) : (
                       <button
                         type="button"
-                        disabled={isConfirming}
-                        onClick={() => onConfirmPickup(item)}
-                        className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-fixed active:scale-[0.98] text-on-primary text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-70 cursor-pointer"
+                        onClick={() => onSelectShipment(item)}
+                        className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-fixed active:scale-[0.98] text-on-primary text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
                       >
-                        {isConfirming ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                            <span>{t(lang, 'confirmingPickup')}</span>
-                          </>
-                        ) : (
-                          <>
-                            <PackageCheck className="w-4 h-4 shrink-0" />
-                            <span>{t(lang, 'confirmPickupBtn')}</span>
-                          </>
-                        )}
+                        <PackageCheck className="w-4 h-4 shrink-0" />
+                        <span>{t(lang, 'reviewAndReceiveBatch')}</span>
                       </button>
                     )}
                   </div>
@@ -549,21 +585,32 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                     <span>{t(lang, 'whatsapp')}</span>
                   </a>
 
-                  <a
-                    href={mapsUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`min-h-[46px] rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all active:scale-[0.98] ${
-                      isFirst
-                        ? 'bg-primary text-on-primary shadow-sm'
-                        : 'bg-surface-container-highest hover:bg-surface-bright text-on-surface'
-                    }`}
-                  >
-                    <Navigation
-                      className={`w-4 h-4 shrink-0 ${isFirst ? 'text-on-primary' : 'text-primary'}`}
-                    />
-                    <span>{t(lang, 'navigate')}</span>
-                  </a>
+                  {isPickup ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenOnMap(item)}
+                      className="min-h-[46px] bg-surface-container-highest hover:bg-surface-bright active:scale-[0.98] text-on-surface rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer"
+                    >
+                      <MapPin className="w-4 h-4 text-secondary shrink-0" />
+                      <span>{t(lang, 'navMap')}</span>
+                    </button>
+                  ) : (
+                    <a
+                      href={mapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`min-h-[46px] rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all active:scale-[0.98] ${
+                        isFirst
+                          ? 'bg-primary text-on-primary shadow-sm'
+                          : 'bg-surface-container-highest hover:bg-surface-bright text-on-surface'
+                      }`}
+                    >
+                      <Navigation
+                        className={`w-4 h-4 shrink-0 ${isFirst ? 'text-on-primary' : 'text-primary'}`}
+                      />
+                      <span>{t(lang, 'navigate')}</span>
+                    </a>
+                  )}
                 </div>
               </article>
             );

@@ -2,6 +2,7 @@ import {
   CourierProfile,
   CustodyParcel,
   CustodySummary,
+  PickupWaybillItem,
   ShipmentTask,
   TaskCategory,
 } from '../types/courier';
@@ -254,6 +255,87 @@ export function normalizeShipment(
     0
   );
 
+  const rawWaybills: AnyRecord[] = Array.isArray(item.shipments)
+    ? item.shipments
+    : Array.isArray(item.waybills)
+      ? item.waybills
+      : Array.isArray(item.orders)
+        ? item.orders
+        : Array.isArray(item.parcels)
+          ? item.parcels
+          : Array.isArray(item.batch_shipments)
+            ? item.batch_shipments
+            : [];
+
+  const batchShipments: PickupWaybillItem[] | undefined =
+    rawWaybills.length > 0
+      ? rawWaybills.map((w, idx) => {
+          const wStatusId = toNullableNumber(w.status_id ?? w.shipment_status_id);
+          const wStatus = String(w.status ?? w.shipment_status ?? '').toLowerCase();
+          const wReceived =
+            Boolean(w.received) ||
+            wStatusId === 5 ||
+            wStatus === 'picked_up' ||
+            wStatus === 'in_custody' ||
+            statusId === 5;
+          const wTracking = String(
+            w.tracking_number ?? w.waybill ?? w.awb ?? w.code ?? `WS-${w.id ?? idx + 1}`
+          ).replace(/^#/, '');
+          return {
+            id: String(w.id ?? w.shipment_id ?? wTracking),
+            trackingNumber: wTracking,
+            pieces: Math.max(1, toNumber(w.pieces ?? w.items_count ?? w.quantity, 1)),
+            itemsSummary: String(
+              w.items_summary ??
+                w.description ??
+                w.contents ??
+                w.product_name ??
+                w.item_name ??
+                'طرد شحن قياسي'
+            ),
+            notes: w.notes ?? w.pickup_notes ?? w.delivery_notes ?? w.instructions ?? undefined,
+            statusId: wStatusId ?? statusId,
+            status: wStatus || status,
+            received: wReceived,
+            receivedVia:
+              w.received_via === 'qr' || w.received_via === 'manual'
+                ? w.received_via
+                : undefined,
+          };
+        })
+      : isPickup
+        ? [
+            {
+              id: String(item.id ?? item.shipment_id ?? tracking),
+              trackingNumber: tracking,
+              pieces: Math.max(1, toNumber(item.items_count ?? item.pieces ?? item.quantity, 1)),
+              itemsSummary: String(
+                item.items_summary ??
+                  item.description ??
+                  item.contents ??
+                  item.product_name ??
+                  'أمر استلام (بيك أب)'
+              ),
+              notes:
+                item.notes ?? item.pickup_notes ?? item.delivery_notes ?? item.instructions ?? undefined,
+              statusId,
+              status,
+              received: statusId === 5 || status === 'picked_up' || status === 'in_custody',
+              receivedVia:
+                item.received_via === 'qr' || item.received_via === 'manual'
+                  ? item.received_via
+                  : undefined,
+            },
+          ]
+        : undefined;
+
+  const effectiveShipmentsCount =
+    shipmentsCount > 0
+      ? shipmentsCount
+      : batchShipments && batchShipments.length > 0
+        ? batchShipments.length
+        : undefined;
+
   return {
     id: String(item.id ?? item.shipment_id ?? tracking),
     trackingNumber: tracking,
@@ -264,7 +346,12 @@ export function normalizeShipment(
     isPickupBatch,
     batchId: batchIdRaw !== undefined && batchIdRaw !== null ? String(batchIdRaw) : undefined,
     batchCode: item.batch_code ? String(item.batch_code) : undefined,
-    shipmentsCount: shipmentsCount > 0 ? shipmentsCount : undefined,
+    shipmentsCount: effectiveShipmentsCount,
+    batchShipments,
+    receivedVia:
+      item.received_via === 'qr' || item.received_via === 'manual'
+        ? item.received_via
+        : undefined,
     priority,
     timeWindow: item.time_window || item.delivery_slot || item.pickup_slot || undefined,
     customerName,
@@ -289,7 +376,7 @@ export function normalizeShipment(
     ),
     itemsCount: Math.max(
       1,
-      toNumber(item.items_count ?? item.pieces ?? item.quantity ?? shipmentsCount, 1)
+      toNumber(item.items_count ?? item.pieces ?? item.quantity ?? effectiveShipmentsCount, 1)
     ),
     weightKg: item.weight ? toNumber(item.weight, 1) : undefined,
     notes: item.notes ?? item.pickup_notes ?? item.delivery_notes ?? item.instructions ?? undefined,
@@ -303,18 +390,36 @@ export function normalizePickupBatch(batch: AnyRecord): ShipmentTask {
   const rawStatus = String(batch.status ?? batch.batch_status ?? 'awaiting_pickup').toLowerCase();
   const explicitStatusId = toNullableNumber(batch.status_id);
 
-  const isPickedUp =
-    explicitStatusId === 5 ||
-    rawStatus.includes('picked') ||
-    rawStatus.includes('custody') ||
-    rawStatus.includes('collected') ||
-    rawStatus.includes('received') ||
-    rawStatus.includes('في عهدة');
+  const isWarehouseReceived =
+    explicitStatusId === 6 ||
+    rawStatus.includes('warehouse') ||
+    rawStatus.includes('handed_over') ||
+    rawStatus.includes('completed');
 
-  const statusId = explicitStatusId ?? (isPickedUp ? 5 : 4);
+  const isPickedUp =
+    !isWarehouseReceived &&
+    (explicitStatusId === 5 ||
+      rawStatus.includes('picked') ||
+      rawStatus.includes('custody') ||
+      rawStatus.includes('collected') ||
+      rawStatus.includes('received') ||
+      rawStatus.includes('في عهدة'));
+
+  const statusId = explicitStatusId ?? (isWarehouseReceived ? 6 : isPickedUp ? 5 : 4);
   const batchCode = String(
     batch.batch_code ?? batch.code ?? batch.reference ?? `PB-${rawId}`
   ).replace(/^#/, '');
+
+  const nestedShipments = Array.isArray(batch.shipments)
+    ? batch.shipments
+    : Array.isArray(batch.waybills)
+      ? batch.waybills
+      : Array.isArray(batch.orders)
+        ? batch.orders
+        : Array.isArray(batch.parcels)
+          ? batch.parcels
+          : [];
+
   const count = Math.max(
     1,
     toNumber(
@@ -323,7 +428,7 @@ export function normalizePickupBatch(batch: AnyRecord): ShipmentTask {
         batch.parcels_count ??
         batch.total_shipments ??
         batch.count ??
-        (Array.isArray(batch.shipments) ? batch.shipments.length : 1),
+        (nestedShipments.length > 0 ? nestedShipments.length : 1),
       1
     )
   );
@@ -337,13 +442,28 @@ export function normalizePickupBatch(batch: AnyRecord): ShipmentTask {
       tracking_number: batchCode,
       is_pickup_batch: true,
       status_id: statusId,
-      status: isPickedUp ? 'picked_up' : 'awaiting_pickup',
+      status: isWarehouseReceived
+        ? 'received_at_warehouse'
+        : isPickedUp
+          ? 'picked_up'
+          : 'awaiting_pickup',
       shipments_count: count,
       items_count: count,
+      shipments: nestedShipments,
       is_prepaid: true,
       cod_amount: toNumber(batch.total_cod ?? batch.cod_amount, 0),
     },
     'pickup'
+  );
+}
+
+function isWarehouseCleared(task: ShipmentTask): boolean {
+  const s = (task.status || '').toLowerCase();
+  return (
+    task.statusId === 6 ||
+    s === 'received_at_warehouse' ||
+    s === 'in_warehouse' ||
+    s === 'warehouse_received'
   );
 }
 
@@ -358,6 +478,8 @@ export function normalizeTasksResponse(raw: AnyRecord): {
   const seenKeys = new Set<string>();
 
   const pushUnique = (task: ShipmentTask) => {
+    // Automatically hide shipments/batches once warehouse receives them (status_id = 6)
+    if (isWarehouseCleared(task)) return;
     const key = `${task.isPickupBatch ? 'batch' : 'ship'}-${task.batchId ?? task.id}-${task.trackingNumber}`;
     if (!seenKeys.has(key)) {
       seenKeys.add(key);
@@ -368,7 +490,20 @@ export function normalizeTasksResponse(raw: AnyRecord): {
   if (Array.isArray(payload)) {
     payload.forEach((item) => pushUnique(normalizeShipment(item)));
   } else if (payload && typeof payload === 'object') {
-    // 1. Mixed primary collections
+    // 1. Explicit pickup_batches table records FIRST so child shipments can attach to them
+    const batchSources = [
+      payload.pickup_batches,
+      payload.batches,
+      raw?.pickup_batches !== payload.pickup_batches ? raw?.pickup_batches : null,
+      raw?.batches !== payload.batches ? raw?.batches : null,
+    ];
+    batchSources.forEach((arr) => {
+      if (Array.isArray(arr)) {
+        arr.forEach((batch) => pushUnique(normalizePickupBatch(batch)));
+      }
+    });
+
+    // 2. Mixed primary collections
     const mixedSources = [
       payload.tasks,
       payload.shipments,
@@ -383,7 +518,7 @@ export function normalizeTasksResponse(raw: AnyRecord): {
       }
     });
 
-    // 2. Explicit delivery collections (e.g. status_id = 7)
+    // 3. Explicit delivery collections (e.g. status_id = 7)
     const deliverySources = [
       payload.deliveries,
       payload.delivery,
@@ -397,7 +532,7 @@ export function normalizeTasksResponse(raw: AnyRecord): {
       }
     });
 
-    // 3. Explicit pickup shipment collections (status_id = 4 / 5)
+    // 4. Explicit pickup shipment collections (status_id = 4 / 5)
     const pickupSources = [
       payload.pickups,
       payload.pickup,
@@ -409,19 +544,6 @@ export function normalizeTasksResponse(raw: AnyRecord): {
     pickupSources.forEach((arr) => {
       if (Array.isArray(arr)) {
         arr.forEach((item) => pushUnique(normalizeShipment(item, 'pickup')));
-      }
-    });
-
-    // 4. Explicit pickup_batches table records
-    const batchSources = [
-      payload.pickup_batches,
-      payload.batches,
-      raw?.pickup_batches !== payload.pickup_batches ? raw?.pickup_batches : null,
-      raw?.batches !== payload.batches ? raw?.batches : null,
-    ];
-    batchSources.forEach((arr) => {
-      if (Array.isArray(arr)) {
-        arr.forEach((batch) => pushUnique(normalizePickupBatch(batch)));
       }
     });
 
@@ -438,8 +560,48 @@ export function normalizeTasksResponse(raw: AnyRecord): {
     });
   }
 
+  // Merge standalone pickup shipments that belong to an existing pickup batch
+  const batchById = new Map<string, ShipmentTask>();
+  collected.forEach((tItem) => {
+    if (tItem.isPickupBatch && tItem.batchId) {
+      batchById.set(tItem.batchId, tItem);
+    }
+  });
+
+  const mergedTasks: ShipmentTask[] = [];
+  collected.forEach((tItem) => {
+    if (
+      !tItem.isPickupBatch &&
+      tItem.category === 'pickup' &&
+      tItem.batchId &&
+      batchById.has(tItem.batchId)
+    ) {
+      const parentBatch = batchById.get(tItem.batchId)!;
+      const existing = parentBatch.batchShipments ? [...parentBatch.batchShipments] : [];
+      // Replace synthetic placeholder if batch had no nested array yet
+      const cleaned = existing.filter((w) => w.trackingNumber !== parentBatch.trackingNumber);
+      if (!cleaned.some((w) => w.trackingNumber === tItem.trackingNumber)) {
+        cleaned.push({
+          id: tItem.id,
+          trackingNumber: tItem.trackingNumber,
+          pieces: tItem.itemsCount || 1,
+          itemsSummary: tItem.itemsSummary,
+          notes: tItem.notes,
+          statusId: tItem.statusId,
+          status: tItem.status,
+          received: tItem.statusId === 5 || tItem.status === 'picked_up',
+          receivedVia: tItem.receivedVia,
+        });
+      }
+      parentBatch.batchShipments = cleaned;
+      parentBatch.shipmentsCount = Math.max(parentBatch.shipmentsCount || 0, cleaned.length);
+      return;
+    }
+    mergedTasks.push(tItem);
+  });
+
   return {
-    tasks: collected,
+    tasks: mergedTasks,
     cashCustody:
       payload.cash_custody !== undefined || payload.total_cod !== undefined
         ? toNumber(payload.cash_custody ?? payload.total_cod, 0)
@@ -460,40 +622,54 @@ export function normalizeCustodyResponse(raw: AnyRecord): CustodySummary {
         ? d.pending_parcels
         : [];
 
-  const pendingParcels: CustodyParcel[] = parcelsRaw.map((p, idx) => {
-    const rawType = String(p.type ?? p.status ?? 'full_return').toLowerCase();
-    const type: CustodyParcel['type'] = rawType.includes('partial')
-      ? 'partial_return'
-      : rawType.includes('postpon')
-        ? 'postponed'
-        : 'full_return';
+  const pendingParcels: CustodyParcel[] = parcelsRaw
+    .filter((p) => {
+      const stId = toNullableNumber(p.status_id ?? p.shipment_status_id);
+      // Exclude status_id = 4 (awaiting pickup — not yet in custody) and status_id = 6 (already handed to warehouse)
+      return stId !== 4 && stId !== 6;
+    })
+    .map((p, idx) => {
+      const stId = toNullableNumber(p.status_id ?? p.shipment_status_id);
+      const rawType = String(p.type ?? p.status ?? 'full_return').toLowerCase();
+      const type: CustodyParcel['type'] =
+        stId === 5 || rawType.includes('pickup') || rawType.includes('picked')
+          ? 'pickup_in_custody'
+          : rawType.includes('partial')
+            ? 'partial_return'
+            : rawType.includes('postpon')
+              ? 'postponed'
+              : 'full_return';
 
-    const tracking = String(p.tracking_number ?? p.waybill ?? p.code ?? `WS-R-${idx + 1}`).replace(/^#/, '');
-    const pieces = Math.max(1, toNumber(p.returned_pieces ?? p.pieces ?? p.items_count, 1));
+      const tracking = String(p.tracking_number ?? p.waybill ?? p.code ?? `WS-R-${idx + 1}`).replace(/^#/, '');
+      const pieces = Math.max(1, toNumber(p.returned_pieces ?? p.pieces ?? p.items_count, 1));
 
-    return {
-      id: String(p.id ?? tracking),
-      trackingNumber: tracking,
-      type,
-      typeLabelAr:
-        type === 'partial_return'
-          ? 'مرتجع جزئي -R'
-          : type === 'postponed'
-            ? 'مؤجل بطلب العميل'
-            : 'مرتجع كلي - رفض استلام',
-      typeLabelEn:
-        type === 'partial_return'
-          ? 'Partial Return -R'
-          : type === 'postponed'
-            ? 'Postponed'
-            : 'Full Return',
-      summaryAr: String(p.reason ?? p.summary ?? `${pieces} قطعة مرتجعة للمخزن`),
-      summaryEn: String(p.reason_en ?? p.reason ?? p.summary ?? `${pieces} piece(s) pending warehouse scan`),
-      metaAr: String(p.merchant_name ?? p.customer_name ?? 'فرع العمليات الرئيسي'),
-      metaEn: String(p.merchant_name ?? p.customer_name ?? 'Main Operations Hub'),
-      pieces,
-    };
-  });
+      return {
+        id: String(p.id ?? tracking),
+        trackingNumber: tracking,
+        type,
+        typeLabelAr:
+          type === 'pickup_in_custody'
+            ? 'بيك أب في عهدتي — مطلوب للمخزن'
+            : type === 'partial_return'
+              ? 'مرتجع جزئي -R'
+              : type === 'postponed'
+                ? 'مؤجل بطلب العميل'
+                : 'مرتجع كلي - رفض استلام',
+        typeLabelEn:
+          type === 'pickup_in_custody'
+            ? 'Pickup In Custody — Warehouse Due'
+            : type === 'partial_return'
+              ? 'Partial Return -R'
+              : type === 'postponed'
+                ? 'Postponed'
+                : 'Full Return',
+        summaryAr: String(p.reason ?? p.summary ?? `${pieces} قطعة مطلوب تسليمها للمخزن`),
+        summaryEn: String(p.reason_en ?? p.reason ?? p.summary ?? `${pieces} piece(s) pending warehouse scan`),
+        metaAr: String(p.merchant_name ?? p.customer_name ?? 'فرع العمليات الرئيسي'),
+        metaEn: String(p.merchant_name ?? p.customer_name ?? 'Main Operations Hub'),
+        pieces,
+      };
+    });
 
   const totalCash = toNumber(d.total_cod_cash ?? d.cash_custody ?? d.total_cash ?? d.cod_due, 0);
 

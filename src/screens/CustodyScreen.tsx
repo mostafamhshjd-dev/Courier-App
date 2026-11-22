@@ -3,6 +3,7 @@ import {
   Barcode,
   Clock,
   Package,
+  PackageCheck,
   PackageX,
   QrCode,
   RefreshCw,
@@ -38,12 +39,14 @@ export const CustodyScreen: React.FC<CustodyScreenProps> = ({
   };
 
   const renderParcelIcon = (type: CustodyParcel['type']) => {
+    if (type === 'pickup_in_custody') return <PackageCheck className="w-5 h-5 text-primary shrink-0" />;
     if (type === 'postponed') return <Clock className="w-5 h-5 text-primary shrink-0" />;
     if (type === 'full_return') return <PackageX className="w-5 h-5 text-tertiary shrink-0" />;
     return <Package className="w-5 h-5 text-primary shrink-0" />;
   };
 
   const renderBadgeClass = (type: CustodyParcel['type']) => {
+    if (type === 'pickup_in_custody') return 'bg-primary/15 text-primary border-primary/35';
     if (type === 'partial_return') return 'bg-secondary/15 text-secondary border-secondary/30';
     if (type === 'full_return') return 'bg-tertiary/15 text-tertiary border-tertiary/30';
     return 'bg-surface-container-highest text-on-surface border-outline-variant/40';

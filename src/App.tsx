@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   clearAuthSession,
   getAuthToken,
@@ -11,6 +11,7 @@ import {
 import {
   ActiveTab,
   CourierProfile,
+  CustodyParcel,
   CustodySummary,
   GeoPoint,
   Language,
@@ -20,8 +21,6 @@ import {
 import {
   DEFAULT_CAIRO_COORDS,
   DEMO_COURIER,
-  DEMO_CUSTODY,
-  DEMO_TASKS,
 } from './data/previewData';
 import {
   extractAuthPayload,
@@ -40,6 +39,10 @@ import {
 import { LoginScreen } from './screens/LoginScreen';
 import { TasksScreen } from './screens/TasksScreen';
 import { ShipmentDetailsScreen } from './screens/ShipmentDetailsScreen';
+import {
+  PickupBatchScreen,
+  PickupConfirmActionPayload,
+} from './screens/PickupBatchScreen';
 import { CustodyScreen } from './screens/CustodyScreen';
 import { SmartMapScreen } from './screens/SmartMapScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
@@ -129,6 +132,7 @@ export default function App() {
   const [outcomeTarget, setOutcomeTarget] = useState<ShipmentTask | null>(null);
   const [outcomeSubmitting, setOutcomeSubmitting] = useState(false);
   const [confirmingPickupId, setConfirmingPickupId] = useState<string | null>(null);
+  const [focusedMapTaskId, setFocusedMapTaskId] = useState<string | null>(null);
 
   const [courierLocation, setCourierLocation] = useState<GeoPoint>(DEFAULT_CAIRO_COORDS);
   const [gpsIsLive, setGpsIsLive] = useState(false);
@@ -492,9 +496,16 @@ export default function App() {
     }
   };
 
-  // Confirm Pickup Order / Batch -> POST /courier/update_status.php (status_id = 5)
-  const handleConfirmPickup = async (task: ShipmentTask) => {
+  // Confirm Pickup Order / Batch -> POST /courier/update_status.php (status_id = 5, received_via = 'qr' | 'manual')
+  const handleConfirmPickup = async ({
+    task,
+    receivedVia,
+    waybills,
+  }: PickupConfirmActionPayload) => {
     setConfirmingPickupId(task.id);
+    const confirmedTrackingNumbers = waybills.map((w) => w.trackingNumber);
+    const confirmedIds = waybills.map((w) => w.id);
+
     try {
       await webstackApi.confirmPickup({
         shipment_id: task.isPickupBatch ? undefined : task.id,
@@ -502,38 +513,41 @@ export default function App() {
         batch_id: task.batchId,
         pickup_batch_id: task.batchId,
         tracking_number: task.trackingNumber,
+        tracking_numbers: confirmedTrackingNumbers,
+        shipment_ids: confirmedIds,
+        received_count: waybills.length,
+        received_via: receivedVia,
         is_batch: task.isPickupBatch ? 1 : 0,
       });
 
-      setTasks((prev) =>
-        prev.map((item) =>
-          item.id === task.id
+      const applyConfirmed = (item: ShipmentTask): ShipmentTask => {
+        if (item.id !== task.id) return item;
+        const nextWaybills = (item.batchShipments || waybills).map((w) =>
+          confirmedTrackingNumbers.includes(w.trackingNumber)
             ? {
-                ...item,
+                ...w,
                 status: 'picked_up',
                 statusId: 5,
-                statusLabel:
-                  lang === 'ar'
-                    ? 'بيك أب في عهدة المندوب'
-                    : 'Pickup In Courier Custody',
+                received: true,
+                receivedVia,
               }
-            : item
-        )
-      );
+            : w
+        );
+        return {
+          ...item,
+          status: 'picked_up',
+          statusId: 5,
+          receivedVia,
+          statusLabel:
+            lang === 'ar'
+              ? 'بيك أب في عهدتي — مطلوب تسليمها للمخزن'
+              : 'Pickup In My Custody — Handover to Warehouse',
+          batchShipments: nextWaybills,
+        };
+      };
 
-      setSelectedShipment((prev) =>
-        prev && prev.id === task.id
-          ? {
-              ...prev,
-              status: 'picked_up',
-              statusId: 5,
-              statusLabel:
-                lang === 'ar'
-                  ? 'بيك أب في عهدة المندوب'
-                  : 'Pickup In Courier Custody',
-            }
-          : prev
-      );
+      setTasks((prev) => prev.map(applyConfirmed));
+      setSelectedShipment((prev) => (prev && prev.id === task.id ? applyConfirmed(prev) : prev));
 
       if (soundEnabled) playFeedbackChime();
       notify(t(lang, 'pickupConfirmedToast'), 'success');
@@ -551,6 +565,74 @@ export default function App() {
       setConfirmingPickupId(null);
     }
   };
+
+  const handleOpenTaskOnMap = useCallback(
+    (task: ShipmentTask) => {
+      if (task.lat === null || task.lng === null) {
+        notify(
+          lang === 'ar'
+            ? 'لا تتوفر إحداثيات GPS لهذا التاجر حالياً'
+            : 'No GPS coordinates available for this merchant yet',
+          'info'
+        );
+        return;
+      }
+      setSelectedShipment(null);
+      setFocusedMapTaskId(task.id);
+      setActiveTab('map');
+    },
+    [lang, notify]
+  );
+
+  // Merge confirmed status_id = 5 pickup orders into Custody parcels automatically.
+  // Status 4 (awaiting pickup) is NEVER included; once warehouse receives them (status 6 / removed by server), they vanish automatically.
+  const effectiveCustody = useMemo<CustodySummary>(() => {
+    const existingTracking = new Set(
+      custody.pendingParcels.map((p) => p.trackingNumber.toUpperCase())
+    );
+    const confirmedPickups: CustodyParcel[] = [];
+
+    tasks.forEach((task) => {
+      if (task.category !== 'pickup') return;
+      const isInCourierCustody =
+        task.statusId === 5 || task.status === 'picked_up' || task.status === 'in_custody';
+      if (!isInCourierCustody) return;
+
+      const code = task.batchCode || task.trackingNumber;
+      if (existingTracking.has(code.toUpperCase())) return;
+      existingTracking.add(code.toUpperCase());
+
+      const count = Math.max(
+        task.shipmentsCount ?? 0,
+        task.batchShipments?.length ?? 0,
+        task.itemsCount ?? 1
+      );
+
+      confirmedPickups.push({
+        id: `pickup-custody-${task.id}`,
+        trackingNumber: code,
+        type: 'pickup_in_custody',
+        typeLabelAr: 'بيك أب في عهدتي — مطلوب للمخزن',
+        typeLabelEn: 'Pickup In Custody — Warehouse Due',
+        summaryAr: `${count} شحنة مستلمة من التاجر (${task.merchantName || task.customerName})`,
+        summaryEn: `${count} shipment(s) picked up from ${task.merchantName || task.customerName}`,
+        metaAr:
+          task.receivedVia === 'qr'
+            ? 'تم الاستلام عبر مسح QR • مطلوب تسليمها للمخزن'
+            : 'مطلوب تسليمها لأمين المخزن (حالة 5)',
+        metaEn:
+          task.receivedVia === 'qr'
+            ? 'Received via QR scan • Handover to warehouse'
+            : 'Pending warehouse handover (Status 5)',
+        pieces: count,
+      });
+    });
+
+    return {
+      ...custody,
+      pendingParcels: [...confirmedPickups, ...custody.pendingParcels],
+    };
+  }, [custody, tasks]);
 
   if (!isAuthenticated) {
     return (
@@ -570,7 +652,9 @@ export default function App() {
   ).length;
 
   const headerTitle = selectedShipment
-    ? t(lang, 'titleDetails')
+    ? selectedShipment.category === 'pickup'
+      ? t(lang, 'titlePickupBatch')
+      : t(lang, 'titleDetails')
     : activeTab === 'tasks'
       ? t(lang, 'titleTasks')
       : activeTab === 'map'
@@ -598,28 +682,36 @@ export default function App() {
 
       <main className="flex-1 w-full pt-15">
         {selectedShipment ? (
-          <ShipmentDetailsScreen
-            shipment={selectedShipment}
-            lang={lang}
-            loading={detailsLoading}
-            confirmingPickup={confirmingPickupId === selectedShipment.id}
-            onOpenOutcomeSheet={() => setOutcomeTarget(selectedShipment)}
-            onConfirmPickup={handleConfirmPickup}
-          />
+          selectedShipment.category === 'pickup' ? (
+            <PickupBatchScreen
+              batch={selectedShipment}
+              lang={lang}
+              loading={detailsLoading}
+              submitting={confirmingPickupId === selectedShipment.id}
+              onOpenOnMap={handleOpenTaskOnMap}
+              onConfirmPickup={handleConfirmPickup}
+            />
+          ) : (
+            <ShipmentDetailsScreen
+              shipment={selectedShipment}
+              lang={lang}
+              loading={detailsLoading}
+              onOpenOutcomeSheet={() => setOutcomeTarget(selectedShipment)}
+            />
+          )
         ) : activeTab === 'tasks' ? (
           <TasksScreen
             courier={courier}
             tasks={tasks}
-            cashCustody={custody.totalCodCash}
+            cashCustody={effectiveCustody.totalCodCash}
             courierLocation={courierLocation}
             shiftActive={shiftActive}
             loading={tasksLoading}
-            confirmingPickupId={confirmingPickupId}
             lang={lang}
             onToggleShift={handleToggleShift}
             onRefresh={loadTasks}
             onSelectShipment={handleOpenShipmentDetails}
-            onConfirmPickup={handleConfirmPickup}
+            onOpenOnMap={handleOpenTaskOnMap}
           />
         ) : activeTab === 'map' ? (
           <SmartMapScreen
@@ -628,16 +720,21 @@ export default function App() {
             gpsIsLive={gpsIsLive}
             lang={lang}
             theme={theme}
+            focusedTaskId={focusedMapTaskId}
+            onClearFocusedTask={() => setFocusedMapTaskId(null)}
             onOpenShipmentDetails={handleOpenShipmentDetails}
             onOpenOutcomeDirect={(shipment) => setOutcomeTarget(shipment)}
             onNotify={notify}
           />
         ) : activeTab === 'custody' ? (
           <CustodyScreen
-            custody={custody}
+            custody={effectiveCustody}
             lang={lang}
             loading={custodyLoading}
-            onRefresh={loadCustody}
+            onRefresh={() => {
+              loadTasks();
+              loadCustody();
+            }}
           />
         ) : (
           <ProfileScreen
