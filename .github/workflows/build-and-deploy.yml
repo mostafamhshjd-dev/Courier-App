@@ -34,15 +34,6 @@ jobs:
       - name: Build web assets
         run: npm run build
 
-      - name: Deploy web app to InfinityFree via FTP
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          local-dir: ./dist/
-          server-dir: /shipping-system.codix.uk/htdocs/courier-app/
-
       - name: Prepare Capacitor Android project
         run: |
           if [ ! -d "android" ]; then
@@ -71,6 +62,20 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
+
+      - name: Copy built APK into dist for InfinityFree deployment
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk dist/webstack-courier.apk
+          ls -lh dist/webstack-courier.apk
+
+      - name: Deploy web app & APK to InfinityFree via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./dist/
+          server-dir: /shipping-system.codix.uk/htdocs/courier-app/
 
       - name: Upload Android APK artifact
         uses: actions/upload-artifact@v4
