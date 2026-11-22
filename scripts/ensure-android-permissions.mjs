@@ -9,10 +9,11 @@ if (!fs.existsSync(manifestPath)) {
   process.exit(0);
 }
 
-// 1. Ensure required Location, Background Service, Notification & Camera permissions in AndroidManifest.xml
+// 1. Ensure required Location, Background Service, Notification, Camera & Flashlight permissions in AndroidManifest.xml
 const requiredPermissions = [
   'android.permission.INTERNET',
   'android.permission.CAMERA',
+  'android.permission.FLASHLIGHT',
   'android.permission.ACCESS_FINE_LOCATION',
   'android.permission.ACCESS_COARSE_LOCATION',
   'android.permission.ACCESS_BACKGROUND_LOCATION',
@@ -25,7 +26,11 @@ const requiredPermissions = [
 const requiredFeatures = [
   '<uses-feature android:name="android.hardware.camera" android:required="false" />',
   '<uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />',
+  '<uses-feature android:name="android.hardware.camera.flash" android:required="false" />',
 ];
+
+const mlkitMetadata =
+  '<meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="barcode_ui" />';
 
 let xml = fs.readFileSync(manifestPath, 'utf8');
 let manifestChanged = false;
@@ -49,14 +54,41 @@ for (const featureTag of requiredFeatures) {
   }
 }
 
-if (manifestChanged) {
-  fs.writeFileSync(manifestPath, xml, 'utf8');
-  console.log('[ensure-android-permissions] Updated AndroidManifest.xml with location & camera permissions.');
-} else {
-  console.log('[ensure-android-permissions] AndroidManifest.xml already has all required permissions.');
+if (!xml.includes('com.google.mlkit.vision.DEPENDENCIES')) {
+  xml = xml.replace('</application>', `        ${mlkitMetadata}\n    </application>`);
+  manifestChanged = true;
 }
 
-// 2. Patch MainActivity.java to grant WebView RESOURCE_VIDEO_CAPTURE + request Android runtime CAMERA permission
+if (manifestChanged) {
+  fs.writeFileSync(manifestPath, xml, 'utf8');
+  console.log(
+    '[ensure-android-permissions] Updated AndroidManifest.xml with location, camera, flashlight & ML Kit barcode metadata.'
+  );
+} else {
+  console.log('[ensure-android-permissions] AndroidManifest.xml already up to date.');
+}
+
+// 2. Enable Data Binding in android/app/build.gradle (required by @capacitor-mlkit/barcode-scanning)
+const appBuildGradlePath = path.join(androidRoot, 'app', 'build.gradle');
+if (fs.existsSync(appBuildGradlePath)) {
+  let gradle = fs.readFileSync(appBuildGradlePath, 'utf8');
+  if (!gradle.includes('dataBinding')) {
+    gradle = gradle.replace(
+      /android\s*\{/,
+      `android {\n    buildFeatures {\n        dataBinding true\n    }`
+    );
+    fs.writeFileSync(appBuildGradlePath, gradle, 'utf8');
+    console.log(
+      '[ensure-android-permissions] Enabled buildFeatures.dataBinding in android/app/build.gradle.'
+    );
+  } else {
+    console.log(
+      '[ensure-android-permissions] dataBinding already configured in android/app/build.gradle.'
+    );
+  }
+}
+
+// 3. Patch MainActivity.java to also grant WebView RESOURCE_VIDEO_CAPTURE + runtime CAMERA permission
 function findFileRecursive(dir, filename) {
   if (!fs.existsSync(dir)) return null;
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -157,7 +189,9 @@ public class MainActivity extends BridgeActivity {
 `;
 
   fs.writeFileSync(mainActivityPath, patchedJava, 'utf8');
-  console.log(`[ensure-android-permissions] Patched ${path.relative(process.cwd(), mainActivityPath)} with WebView camera runtime permission handler.`);
+  console.log(
+    `[ensure-android-permissions] Patched ${path.relative(process.cwd(), mainActivityPath)} with WebView camera runtime permission handler.`
+  );
 } else {
   console.log('[ensure-android-permissions] MainActivity.java not found, skipping Java patch.');
 }

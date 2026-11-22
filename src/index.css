@@ -184,9 +184,54 @@
   animation: ws-slide-up 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Native Full-Screen ML Kit Camera Preview: make WebView & app root transparent while portal HUD floats over camera */
+html.barcode-scanner-active,
+body.barcode-scanner-active {
+  background: transparent !important;
+  background-color: transparent !important;
+  overflow: hidden !important;
+}
+
+body.barcode-scanner-active #root {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Ensure web fallback video fills full-screen cleanly */
+.ws-fullscreen-web-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+
+.ws-fullscreen-web-reader > div {
+  border: none !important;
+}
+
+@keyframes ws-scan-line {
+  0% {
+    transform: translateY(0%);
+    opacity: 0.4;
+  }
+  50% {
+    transform: translateY(210px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0%);
+    opacity: 0.4;
+  }
+}
+
+.ws-scan-line {
+  animation: ws-scan-line 2.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ws-pulse-ring,
-  .animate-slide-up {
+  .animate-slide-up,
+  .ws-scan-line {
     animation: none !important;
   }
 }
