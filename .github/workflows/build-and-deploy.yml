@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-and-deploy:
@@ -63,12 +63,25 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Copy built APK into dist for InfinityFree deployment
+      - name: Prepare APK asset for GitHub Release
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk dist/webstack-courier.apk
-          ls -lh dist/webstack-courier.apk
+          rm -rf release-assets
+          mkdir -p release-assets
+          cp android/app/build/outputs/apk/debug/app-debug.apk release-assets/webstack-courier.apk
+          ls -lh release-assets/webstack-courier.apk
 
-      - name: Deploy web app & APK to InfinityFree via FTP
+      - name: Publish APK to GitHub Release (latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: WebStack Courier APK (Latest)
+          body: أحدث إصدار من تطبيق مندوب WebStack للأندرويد (APK).
+          files: release-assets/webstack-courier.apk
+          overwrite_files: true
+          make_latest: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy web app & download page to InfinityFree via FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
