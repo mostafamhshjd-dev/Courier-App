@@ -30,12 +30,18 @@ export function extractAuthPayload(raw: AnyRecord): {
   courier: CourierProfile;
 } {
   const container = raw?.data ?? raw ?? {};
-  const token =
+  const rawToken = String(
     container.token ||
-    container.access_token ||
-    container.api_token ||
-    raw?.token ||
-    '';
+      container.access_token ||
+      container.api_token ||
+      container.auth_token ||
+      container.bearer_token ||
+      raw?.token ||
+      raw?.access_token ||
+      raw?.api_token ||
+      ''
+  ).trim();
+  const token = rawToken.replace(/^Bearer\s+/i, '').trim();
 
   const u = container.user || container.courier || container.profile || container;
   const courier: CourierProfile = {
@@ -64,21 +70,88 @@ export function extractAuthPayload(raw: AnyRecord): {
   return { token, courier };
 }
 
-function normalizeCategory(rawCat: unknown, status: string): TaskCategory {
+function normalizeCategory(
+  rawCat: unknown,
+  status: string,
+  statusId?: number | null,
+  statusLabel?: string
+): TaskCategory {
+  if (statusId === 4 || statusId === 5) return 'pickup';
+  if (statusId === 7) return 'delivery';
+
   const c = String(rawCat || '').toLowerCase();
-  const s = status.toLowerCase();
-  if (c.includes('pickup') || c.includes('collect') || s.includes('pickup')) return 'pickup';
-  if (c.includes('return') || s.includes('return') || s.includes('refus') || s.includes('postpon')) {
+  const s = `${status} ${statusLabel || ''}`.toLowerCase();
+
+  if (
+    c.includes('pickup') ||
+    c.includes('collect') ||
+    c.includes('batch') ||
+    s.includes('pickup') ||
+    s.includes('picked_up') ||
+    s.includes('awaiting_pickup') ||
+    s.includes('بيك') ||
+    s.includes('استلام المندوب') ||
+    s.includes('في عهدة المندوب')
+  ) {
+    return 'pickup';
+  }
+  if (
+    c.includes('return') ||
+    s.includes('return') ||
+    s.includes('refus') ||
+    s.includes('postpon') ||
+    s.includes('مرتجع') ||
+    s.includes('مؤجل') ||
+    s.includes('رفض')
+  ) {
     return 'returns';
   }
   return 'delivery';
 }
 
-export function normalizeShipment(item: AnyRecord): ShipmentTask {
-  const status = String(item.status ?? item.shipment_status ?? 'out_for_delivery');
-  const cod = toNumber(item.cod_amount ?? item.cod ?? item.amount_to_collect ?? item.cash_on_delivery, 0);
+export function normalizeShipment(
+  item: AnyRecord,
+  forcedCategory?: TaskCategory
+): ShipmentTask {
+  const statusId = toNullableNumber(
+    item.status_id ?? item.shipment_status_id ?? item.current_status_id
+  );
+  const statusLabel = String(
+    item.status_name_ar ??
+      item.status_ar ??
+      item.status_label ??
+      item.status_name ??
+      ''
+  ).trim() || undefined;
+
+  const defaultStatus =
+    statusId === 4
+      ? 'awaiting_pickup'
+      : statusId === 5
+        ? 'picked_up'
+        : statusId === 7
+          ? 'out_for_delivery'
+          : 'out_for_delivery';
+
+  const status = String(
+    item.status ?? item.status_code ?? item.status_slug ?? item.shipment_status ?? defaultStatus
+  );
+
+  const category =
+    forcedCategory ??
+    normalizeCategory(item.type ?? item.task_type ?? item.category, status, statusId, statusLabel);
+
+  const cod = toNumber(
+    item.cod_amount ?? item.cod ?? item.amount_to_collect ?? item.cash_on_delivery,
+    0
+  );
   const tracking = String(
-    item.tracking_number ?? item.waybill ?? item.awb ?? item.code ?? `WS-${item.id ?? '00000'}`
+    item.tracking_number ??
+      item.waybill ??
+      item.awb ??
+      item.batch_code ??
+      item.code ??
+      `WS-${item.id ?? item.shipment_id ?? '00000'}`
   ).replace(/^#/, '');
 
   const rawPriority = String(item.priority ?? '').toLowerCase();
@@ -89,41 +162,189 @@ export function normalizeShipment(item: AnyRecord): ShipmentTask {
     priority = 'high_value';
   }
 
+  const isPickup = category === 'pickup';
+  const isPickupBatch = Boolean(
+    item.is_pickup_batch || item.is_batch || (item.batch_code && !item.tracking_number)
+  );
+  const batchIdRaw = item.pickup_batch_id ?? item.batch_id ?? (isPickupBatch ? item.id : undefined);
+
+  const merchantName = String(
+    item.merchant_name ??
+      item.sender_name ??
+      item.store_name ??
+      item.client_name ??
+      'WebStack Merchant'
+  );
+
+  const customerName = isPickup
+    ? String(
+        item.merchant_name ??
+          item.sender_name ??
+          item.store_name ??
+          item.customer_name ??
+          item.client_name ??
+          'تاجر'
+      )
+    : String(
+        item.customer_name ??
+          item.receiver_name ??
+          item.recipient_name ??
+          item.client_name ??
+          'عميل'
+      );
+
+  const customerPhone = isPickup
+    ? String(
+        item.merchant_phone ??
+          item.sender_phone ??
+          item.pickup_phone ??
+          item.contact_phone ??
+          item.customer_phone ??
+          item.phone ??
+          ''
+      )
+    : String(
+        item.customer_phone ??
+          item.receiver_phone ??
+          item.recipient_phone ??
+          item.phone ??
+          ''
+      );
+
+  const address = isPickup
+    ? String(
+        item.pickup_address ??
+          item.merchant_address ??
+          item.sender_address ??
+          item.address ??
+          item.full_address ??
+          ''
+      )
+    : String(
+        item.address ??
+          item.delivery_address ??
+          item.receiver_address ??
+          item.full_address ??
+          ''
+      );
+
+  const lat = isPickup
+    ? toNullableNumber(
+        item.pickup_lat ?? item.merchant_lat ?? item.lat ?? item.latitude ?? item.coords?.lat
+      )
+    : toNullableNumber(
+        item.lat ?? item.latitude ?? item.delivery_lat ?? item.coords?.lat
+      );
+
+  const lng = isPickup
+    ? toNullableNumber(
+        item.pickup_lng ??
+          item.merchant_lng ??
+          item.lng ??
+          item.lon ??
+          item.longitude ??
+          item.coords?.lng
+      )
+    : toNullableNumber(
+        item.lng ?? item.lon ?? item.longitude ?? item.delivery_lng ?? item.coords?.lng
+      );
+
+  const shipmentsCount = toNumber(
+    item.shipments_count ?? item.orders_count ?? item.parcels_count ?? item.total_shipments,
+    0
+  );
+
   return {
     id: String(item.id ?? item.shipment_id ?? tracking),
     trackingNumber: tracking,
-    category: normalizeCategory(item.type ?? item.task_type ?? item.category, status),
+    category,
     status,
+    statusId,
+    statusLabel,
+    isPickupBatch,
+    batchId: batchIdRaw !== undefined && batchIdRaw !== null ? String(batchIdRaw) : undefined,
+    batchCode: item.batch_code ? String(item.batch_code) : undefined,
+    shipmentsCount: shipmentsCount > 0 ? shipmentsCount : undefined,
     priority,
-    timeWindow: item.time_window || item.delivery_slot || undefined,
-    customerName: String(
-      item.customer_name ?? item.receiver_name ?? item.recipient_name ?? item.client_name ?? 'عميل'
-    ),
-    customerPhone: String(
-      item.customer_phone ?? item.receiver_phone ?? item.recipient_phone ?? item.phone ?? ''
-    ),
+    timeWindow: item.time_window || item.delivery_slot || item.pickup_slot || undefined,
+    customerName,
+    customerPhone,
     customerRating: item.customer_rating ? toNumber(item.customer_rating, 4.8) : undefined,
-    address: String(
-      item.address ?? item.delivery_address ?? item.receiver_address ?? item.full_address ?? ''
-    ),
+    address,
     district: String(item.district ?? item.area ?? item.city ?? item.zone ?? ''),
-    lat: toNullableNumber(item.lat ?? item.latitude ?? item.delivery_lat ?? item.coords?.lat),
-    lng: toNullableNumber(item.lng ?? item.lon ?? item.longitude ?? item.delivery_lng ?? item.coords?.lng),
+    lat,
+    lng,
     codAmount: cod,
     isPrepaid:
       item.is_prepaid !== undefined
         ? Boolean(item.is_prepaid)
         : item.payment_type === 'prepaid' || cod <= 0,
-    merchantName: String(item.merchant_name ?? item.sender_name ?? item.store_name ?? 'WebStack Merchant'),
+    merchantName,
     itemsSummary: String(
-      item.items_summary ?? item.description ?? item.contents ?? item.product_name ?? 'طرد شحن قياسي'
+      item.items_summary ??
+        item.description ??
+        item.contents ??
+        item.product_name ??
+        (isPickup ? 'أمر استلام (بيك أب)' : 'طرد شحن قياسي')
     ),
-    itemsCount: Math.max(1, toNumber(item.items_count ?? item.pieces ?? item.quantity, 1)),
+    itemsCount: Math.max(
+      1,
+      toNumber(item.items_count ?? item.pieces ?? item.quantity ?? shipmentsCount, 1)
+    ),
     weightKg: item.weight ? toNumber(item.weight, 1) : undefined,
-    notes: item.notes ?? item.delivery_notes ?? item.instructions ?? undefined,
-    otpRequired: item.otp_required !== undefined ? Boolean(item.otp_required) : true,
-    updatedAt: item.updated_at || undefined,
+    notes: item.notes ?? item.pickup_notes ?? item.delivery_notes ?? item.instructions ?? undefined,
+    otpRequired: item.otp_required !== undefined ? Boolean(item.otp_required) : !isPickup,
+    updatedAt: item.updated_at || item.created_at || undefined,
   };
+}
+
+export function normalizePickupBatch(batch: AnyRecord): ShipmentTask {
+  const rawId = String(batch.id ?? batch.batch_id ?? batch.pickup_batch_id ?? Date.now());
+  const rawStatus = String(batch.status ?? batch.batch_status ?? 'awaiting_pickup').toLowerCase();
+  const explicitStatusId = toNullableNumber(batch.status_id);
+
+  const isPickedUp =
+    explicitStatusId === 5 ||
+    rawStatus.includes('picked') ||
+    rawStatus.includes('custody') ||
+    rawStatus.includes('collected') ||
+    rawStatus.includes('received') ||
+    rawStatus.includes('في عهدة');
+
+  const statusId = explicitStatusId ?? (isPickedUp ? 5 : 4);
+  const batchCode = String(
+    batch.batch_code ?? batch.code ?? batch.reference ?? `PB-${rawId}`
+  ).replace(/^#/, '');
+  const count = Math.max(
+    1,
+    toNumber(
+      batch.shipments_count ??
+        batch.orders_count ??
+        batch.parcels_count ??
+        batch.total_shipments ??
+        batch.count ??
+        (Array.isArray(batch.shipments) ? batch.shipments.length : 1),
+      1
+    )
+  );
+
+  return normalizeShipment(
+    {
+      ...batch,
+      id: `batch-${rawId}`,
+      batch_id: rawId,
+      batch_code: batchCode,
+      tracking_number: batchCode,
+      is_pickup_batch: true,
+      status_id: statusId,
+      status: isPickedUp ? 'picked_up' : 'awaiting_pickup',
+      shipments_count: count,
+      items_count: count,
+      is_prepaid: true,
+      cod_amount: toNumber(batch.total_cod ?? batch.cod_amount, 0),
+    },
+    'pickup'
+  );
 }
 
 export function normalizeTasksResponse(raw: AnyRecord): {
@@ -133,18 +354,92 @@ export function normalizeTasksResponse(raw: AnyRecord): {
   totalToday?: number;
 } {
   const payload = raw?.data ?? raw ?? {};
-  const list: AnyRecord[] = Array.isArray(payload)
-    ? payload
-    : Array.isArray(payload.tasks)
-      ? payload.tasks
-      : Array.isArray(payload.shipments)
-        ? payload.shipments
-        : Array.isArray(payload.orders)
-          ? payload.orders
-          : [];
+  const collected: ShipmentTask[] = [];
+  const seenKeys = new Set<string>();
+
+  const pushUnique = (task: ShipmentTask) => {
+    const key = `${task.isPickupBatch ? 'batch' : 'ship'}-${task.batchId ?? task.id}-${task.trackingNumber}`;
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      collected.push(task);
+    }
+  };
+
+  if (Array.isArray(payload)) {
+    payload.forEach((item) => pushUnique(normalizeShipment(item)));
+  } else if (payload && typeof payload === 'object') {
+    // 1. Mixed primary collections
+    const mixedSources = [
+      payload.tasks,
+      payload.shipments,
+      payload.orders,
+      payload.items,
+      raw?.tasks !== payload.tasks ? raw?.tasks : null,
+      raw?.shipments !== payload.shipments ? raw?.shipments : null,
+    ];
+    mixedSources.forEach((arr) => {
+      if (Array.isArray(arr)) {
+        arr.forEach((item) => pushUnique(normalizeShipment(item)));
+      }
+    });
+
+    // 2. Explicit delivery collections (e.g. status_id = 7)
+    const deliverySources = [
+      payload.deliveries,
+      payload.delivery,
+      payload.delivery_shipments,
+      payload.out_for_delivery,
+      raw?.deliveries !== payload.deliveries ? raw?.deliveries : null,
+    ];
+    deliverySources.forEach((arr) => {
+      if (Array.isArray(arr)) {
+        arr.forEach((item) => pushUnique(normalizeShipment(item, 'delivery')));
+      }
+    });
+
+    // 3. Explicit pickup shipment collections (status_id = 4 / 5)
+    const pickupSources = [
+      payload.pickups,
+      payload.pickup,
+      payload.pickup_shipments,
+      payload.pickup_orders,
+      payload.awaiting_pickup,
+      raw?.pickups !== payload.pickups ? raw?.pickups : null,
+    ];
+    pickupSources.forEach((arr) => {
+      if (Array.isArray(arr)) {
+        arr.forEach((item) => pushUnique(normalizeShipment(item, 'pickup')));
+      }
+    });
+
+    // 4. Explicit pickup_batches table records
+    const batchSources = [
+      payload.pickup_batches,
+      payload.batches,
+      raw?.pickup_batches !== payload.pickup_batches ? raw?.pickup_batches : null,
+      raw?.batches !== payload.batches ? raw?.batches : null,
+    ];
+    batchSources.forEach((arr) => {
+      if (Array.isArray(arr)) {
+        arr.forEach((batch) => pushUnique(normalizePickupBatch(batch)));
+      }
+    });
+
+    // 5. Explicit returns collections
+    const returnSources = [
+      payload.returns,
+      payload.return_shipments,
+      raw?.returns !== payload.returns ? raw?.returns : null,
+    ];
+    returnSources.forEach((arr) => {
+      if (Array.isArray(arr)) {
+        arr.forEach((item) => pushUnique(normalizeShipment(item, 'returns')));
+      }
+    });
+  }
 
   return {
-    tasks: list.map(normalizeShipment),
+    tasks: collected,
     cashCustody:
       payload.cash_custody !== undefined || payload.total_cod !== undefined
         ? toNumber(payload.cash_custody ?? payload.total_cod, 0)

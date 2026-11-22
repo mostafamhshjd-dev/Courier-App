@@ -32,6 +32,12 @@ export interface ShipmentTask {
   trackingNumber: string;
   category: TaskCategory;
   status: string;
+  statusId?: number | null;
+  statusLabel?: string;
+  isPickupBatch?: boolean;
+  batchId?: string;
+  batchCode?: string;
+  shipmentsCount?: number;
   priority?: 'urgent' | 'high_value' | 'normal';
   timeWindow?: string;
   customerName: string;

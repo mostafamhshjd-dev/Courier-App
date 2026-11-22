@@ -4,10 +4,12 @@ import {
   Banknote,
   CheckCircle2,
   ClipboardCheck,
+  Loader2,
   MapPin,
   MessageCircle,
   Navigation,
   Package,
+  PackageCheck,
   Phone,
   StickyNote,
   Store,
@@ -21,19 +23,35 @@ interface ShipmentDetailsScreenProps {
   shipment: ShipmentTask;
   lang: Language;
   loading?: boolean;
+  confirmingPickup?: boolean;
   onOpenOutcomeSheet: () => void;
+  onConfirmPickup?: (shipment: ShipmentTask) => void;
 }
 
 export const ShipmentDetailsScreen: React.FC<ShipmentDetailsScreenProps> = ({
   shipment,
   lang,
   loading,
+  confirmingPickup = false,
   onOpenOutcomeSheet,
+  onConfirmPickup,
 }) => {
   const mapsUrl = buildGoogleMapsUrl(shipment.lat, shipment.lng, shipment.address);
   const whatsappUrl = formatWhatsAppUrl(shipment.customerPhone);
+  const isPickup = shipment.category === 'pickup';
+  const isPickedUp =
+    shipment.statusId === 5 ||
+    shipment.status === 'picked_up' ||
+    shipment.status === 'in_custody';
 
   const statusText = (() => {
+    if (shipment.statusLabel) return shipment.statusLabel;
+    if (shipment.statusId === 4 || shipment.status === 'awaiting_pickup') {
+      return t(lang, 'pickupStatusAwaiting');
+    }
+    if (shipment.statusId === 5 || shipment.status === 'picked_up') {
+      return t(lang, 'pickupStatusInCustody');
+    }
     switch (shipment.status) {
       case 'delivered':
         return t(lang, 'deliveredStatus');
@@ -226,14 +244,42 @@ export const ShipmentDetailsScreen: React.FC<ShipmentDetailsScreenProps> = ({
       {/* Fixed Bottom Primary Action Bar */}
       <div className="fixed bottom-0 inset-x-0 z-30 p-4 pb-safe bg-gradient-to-t from-surface via-surface/95 to-transparent">
         <div className="max-w-2xl mx-auto">
-          <button
-            type="button"
-            onClick={onOpenOutcomeSheet}
-            className="w-full min-h-[56px] rounded-2xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-base font-bold shadow-[0_8px_28px_-4px_rgba(16,185,129,0.4)] flex items-center justify-center gap-2 active:scale-[0.98] transition-all cursor-pointer"
-          >
-            <ClipboardCheck className="w-5 h-5" />
-            <span>{t(lang, 'recordOutcomeCta')}</span>
-          </button>
+          {isPickup && onConfirmPickup ? (
+            isPickedUp ? (
+              <div className="w-full min-h-[54px] rounded-2xl bg-primary/15 border border-primary/35 text-primary font-display text-sm font-bold flex items-center justify-center gap-2">
+                <PackageCheck className="w-5 h-5" />
+                <span>{t(lang, 'pickupConfirmedBadge')}</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={confirmingPickup}
+                onClick={() => onConfirmPickup(shipment)}
+                className="w-full min-h-[56px] rounded-2xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-base font-bold shadow-[0_8px_28px_-4px_rgba(16,185,129,0.4)] flex items-center justify-center gap-2 active:scale-[0.98] transition-all disabled:opacity-70 cursor-pointer"
+              >
+                {confirmingPickup ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>{t(lang, 'confirmingPickup')}</span>
+                  </>
+                ) : (
+                  <>
+                    <PackageCheck className="w-5 h-5" />
+                    <span>{t(lang, 'confirmPickupBtn')}</span>
+                  </>
+                )}
+              </button>
+            )
+          ) : (
+            <button
+              type="button"
+              onClick={onOpenOutcomeSheet}
+              className="w-full min-h-[56px] rounded-2xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-base font-bold shadow-[0_8px_28px_-4px_rgba(16,185,129,0.4)] flex items-center justify-center gap-2 active:scale-[0.98] transition-all cursor-pointer"
+            >
+              <ClipboardCheck className="w-5 h-5" />
+              <span>{t(lang, 'recordOutcomeCta')}</span>
+            </button>
+          )}
         </div>
       </div>
     </div>

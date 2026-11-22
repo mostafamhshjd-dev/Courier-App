@@ -128,6 +128,7 @@ export default function App() {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [outcomeTarget, setOutcomeTarget] = useState<ShipmentTask | null>(null);
   const [outcomeSubmitting, setOutcomeSubmitting] = useState(false);
+  const [confirmingPickupId, setConfirmingPickupId] = useState<string | null>(null);
 
   const [courierLocation, setCourierLocation] = useState<GeoPoint>(DEFAULT_CAIRO_COORDS);
   const [gpsIsLive, setGpsIsLive] = useState(false);
@@ -491,6 +492,66 @@ export default function App() {
     }
   };
 
+  // Confirm Pickup Order / Batch -> POST /courier/update_status.php (status_id = 5)
+  const handleConfirmPickup = async (task: ShipmentTask) => {
+    setConfirmingPickupId(task.id);
+    try {
+      await webstackApi.confirmPickup({
+        shipment_id: task.isPickupBatch ? undefined : task.id,
+        id: task.isPickupBatch ? task.batchId ?? task.id : task.id,
+        batch_id: task.batchId,
+        pickup_batch_id: task.batchId,
+        tracking_number: task.trackingNumber,
+        is_batch: task.isPickupBatch ? 1 : 0,
+      });
+
+      setTasks((prev) =>
+        prev.map((item) =>
+          item.id === task.id
+            ? {
+                ...item,
+                status: 'picked_up',
+                statusId: 5,
+                statusLabel:
+                  lang === 'ar'
+                    ? 'بيك أب في عهدة المندوب'
+                    : 'Pickup In Courier Custody',
+              }
+            : item
+        )
+      );
+
+      setSelectedShipment((prev) =>
+        prev && prev.id === task.id
+          ? {
+              ...prev,
+              status: 'picked_up',
+              statusId: 5,
+              statusLabel:
+                lang === 'ar'
+                  ? 'بيك أب في عهدة المندوب'
+                  : 'Pickup In Courier Custody',
+            }
+          : prev
+      );
+
+      if (soundEnabled) playFeedbackChime();
+      notify(t(lang, 'pickupConfirmedToast'), 'success');
+      loadTasks();
+      loadCustody();
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : lang === 'ar'
+            ? 'تعذر تأكيد استلام أمر البيك أب، حاول مرة أخرى'
+            : 'Could not confirm pickup, please retry';
+      notify(msg, 'error');
+    } finally {
+      setConfirmingPickupId(null);
+    }
+  };
+
   if (!isAuthenticated) {
     return (
       <>
@@ -504,7 +565,9 @@ export default function App() {
     );
   }
 
-  const pendingTaskCount = tasks.filter((item) => item.status !== 'delivered').length;
+  const pendingTaskCount = tasks.filter(
+    (item) => item.category === 'pickup' || (item.status !== 'delivered' && item.statusId !== 8)
+  ).length;
 
   const headerTitle = selectedShipment
     ? t(lang, 'titleDetails')
@@ -539,7 +602,9 @@ export default function App() {
             shipment={selectedShipment}
             lang={lang}
             loading={detailsLoading}
+            confirmingPickup={confirmingPickupId === selectedShipment.id}
             onOpenOutcomeSheet={() => setOutcomeTarget(selectedShipment)}
+            onConfirmPickup={handleConfirmPickup}
           />
         ) : activeTab === 'tasks' ? (
           <TasksScreen
@@ -549,10 +614,12 @@ export default function App() {
             courierLocation={courierLocation}
             shiftActive={shiftActive}
             loading={tasksLoading}
+            confirmingPickupId={confirmingPickupId}
             lang={lang}
             onToggleShift={handleToggleShift}
             onRefresh={loadTasks}
             onSelectShipment={handleOpenShipmentDetails}
+            onConfirmPickup={handleConfirmPickup}
           />
         ) : activeTab === 'map' ? (
           <SmartMapScreen

@@ -111,9 +111,10 @@ export async function apiRequest(endpoint, options = {}) {
   }
 
   if (!skipAuth) {
-    const token = getAuthToken();
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
+    const rawToken = getAuthToken();
+    const cleanToken = rawToken ? rawToken.replace(/^Bearer\s+/i, '').trim() : '';
+    if (cleanToken) {
+      headers.Authorization = `Bearer ${cleanToken}`;
     }
   }
 
@@ -247,6 +248,17 @@ export const webstackApi = {
     apiRequest('/courier/update_status.php', {
       method: 'POST',
       body: payload,
+    }),
+
+  confirmPickup: (payload) =>
+    apiRequest('/courier/update_status.php', {
+      method: 'POST',
+      body: {
+        action: 'confirm_pickup',
+        status: 'picked_up',
+        status_id: 5,
+        ...payload,
+      },
     }),
 
   getCustody: () =>

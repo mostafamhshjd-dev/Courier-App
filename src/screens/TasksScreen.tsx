@@ -1,15 +1,19 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Banknote,
   CheckCircle2,
   Clock,
+  Loader2,
   MapPin,
   MessageCircle,
   Navigation,
+  Package,
+  PackageCheck,
   Phone,
   Power,
   RefreshCw,
   Shield,
+  Store,
   Truck,
   User,
   Zap,
@@ -36,10 +40,29 @@ interface TasksScreenProps {
   courierLocation: GeoPoint;
   shiftActive: boolean;
   loading: boolean;
+  confirmingPickupId?: string | null;
   lang: Language;
   onToggleShift: () => void;
   onRefresh: () => void;
   onSelectShipment: (shipment: ShipmentTask) => void;
+  onConfirmPickup: (shipment: ShipmentTask) => void;
+}
+
+function isPickupInCustody(item: ShipmentTask): boolean {
+  const s = (item.status || '').toLowerCase();
+  return (
+    item.statusId === 5 ||
+    s === 'picked_up' ||
+    s === 'in_custody' ||
+    s === 'collected' ||
+    s.includes('في عهدة')
+  );
+}
+
+function isDeliveryCompleted(item: ShipmentTask): boolean {
+  if (item.category === 'pickup') return false;
+  const s = (item.status || '').toLowerCase();
+  return s === 'delivered' || item.statusId === 8;
 }
 
 export const TasksScreen: React.FC<TasksScreenProps> = ({
@@ -49,17 +72,18 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   courierLocation,
   shiftActive,
   loading,
+  confirmingPickupId = null,
   lang,
   onToggleShift,
   onRefresh,
   onSelectShipment,
+  onConfirmPickup,
 }) => {
   const [activeCategory, setActiveCategory] = useState<TaskCategory>('delivery');
+  const userPickedTabRef = useRef(false);
 
   const counts = useMemo(() => {
-    const active = tasks.filter(
-      (item) => item.status !== 'delivered'
-    );
+    const active = tasks.filter((item) => !isDeliveryCompleted(item));
     return {
       delivery: active.filter((i) => i.category === 'delivery').length,
       pickup: active.filter((i) => i.category === 'pickup').length,
@@ -68,9 +92,18 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
     };
   }, [tasks]);
 
+  // If the courier has assigned pickup orders/batches and 0 delivery orders on load,
+  // switch automatically to the Pickup tab so they immediately see their pickup assignments.
+  useEffect(() => {
+    if (userPickedTabRef.current) return;
+    if (counts.delivery === 0 && counts.pickup > 0 && activeCategory === 'delivery') {
+      setActiveCategory('pickup');
+    }
+  }, [counts.delivery, counts.pickup, activeCategory]);
+
   const filteredTasks = useMemo(() => {
     return tasks
-      .filter((item) => item.category === activeCategory && item.status !== 'delivered')
+      .filter((item) => item.category === activeCategory && !isDeliveryCompleted(item))
       .map((item) => {
         const distKm =
           item.lat !== null && item.lng !== null
@@ -84,6 +117,12 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         return { item, distKm };
       })
       .sort((a, b) => {
+        // For pickup tab: keep awaiting pickup (status_id = 4) above already picked up (status_id = 5)
+        if (activeCategory === 'pickup') {
+          const aPicked = isPickupInCustody(a.item) ? 1 : 0;
+          const bPicked = isPickupInCustody(b.item) ? 1 : 0;
+          if (aPicked !== bPicked) return aPicked - bPicked;
+        }
         if (a.distKm === null && b.distKm === null) return 0;
         if (a.distKm === null) return 1;
         if (b.distKm === null) return -1;
@@ -97,6 +136,13 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   }, [courier.completedToday, courier.totalToday, counts.totalRemaining]);
 
   const firstName = courier.name.split(' ')[0] || courier.name;
+
+  const sectionTitle =
+    activeCategory === 'pickup'
+      ? t(lang, 'upcomingPickups')
+      : activeCategory === 'returns'
+        ? t(lang, 'upcomingReturns')
+        : t(lang, 'upcomingShipments');
 
   return (
     <div className="w-full max-w-2xl mx-auto px-4 pt-3 pb-28 space-y-4">
@@ -222,10 +268,15 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
               type="button"
               role="tab"
               aria-selected={selected}
-              onClick={() => setActiveCategory(tab.id)}
-              className={`flex-1 min-h-[42px] py-2 px-2 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              onClick={() => {
+                userPickedTabRef.current = true;
+                setActiveCategory(tab.id);
+              }}
+              className={`flex-1 min-h-[44px] py-2 px-2 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 selected
-                  ? 'bg-primary text-on-primary shadow-sm'
+                  ? tab.id === 'pickup'
+                    ? 'bg-secondary text-on-secondary shadow-sm'
+                    : 'bg-primary text-on-primary shadow-sm'
                   : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
@@ -233,8 +284,12 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
               <span
                 className={`px-2 py-0.5 rounded-full text-[11px] font-bold tabular-nums ${
                   selected
-                    ? 'bg-on-primary/20 text-on-primary'
-                    : 'bg-surface-container-high text-on-surface-variant'
+                    ? tab.id === 'pickup'
+                      ? 'bg-on-secondary/20 text-on-secondary'
+                      : 'bg-on-primary/20 text-on-primary'
+                    : tab.id === 'pickup' && tab.count > 0
+                      ? 'bg-secondary/20 text-secondary'
+                      : 'bg-surface-container-high text-on-surface-variant'
                 }`}
               >
                 {tab.count}
@@ -244,12 +299,12 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         })}
       </section>
 
-      {/* Section Header + Manual Refresh */}
-      <div className="flex items-center justify-between pt-1">
-        <h2 className="font-display text-base sm:text-lg font-bold text-on-surface">
-          {t(lang, 'upcomingShipments')}
+      {/* Section Header + Manual Instant Refresh */}
+      <div className="flex items-center justify-between gap-2 pt-1">
+        <h2 className="font-display text-base sm:text-lg font-bold text-on-surface truncate">
+          {sectionTitle}
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-on-surface-variant hidden sm:inline">
             {t(lang, 'smartOrderNearest')}
           </span>
@@ -257,7 +312,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
             type="button"
             onClick={onRefresh}
             disabled={loading}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-surface-container-low border border-outline-variant/25 text-xs font-semibold text-primary hover:bg-surface-container-high transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 min-h-[40px] rounded-full bg-surface-container-low border border-outline-variant/30 text-xs font-bold text-primary hover:bg-surface-container-high active:scale-95 transition cursor-pointer disabled:opacity-60"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             <span>{t(lang, 'refresh')}</span>
@@ -265,29 +320,46 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         </div>
       </div>
 
-      {/* Shipment Cards Queue */}
+      {/* Shipment & Pickup Cards Queue */}
       {loading && filteredTasks.length === 0 ? (
         <div className="py-12 text-center text-sm text-on-surface-variant">
           {t(lang, 'loadingTasks')}
         </div>
       ) : filteredTasks.length === 0 ? (
-        <div className="bg-surface-container-low border border-outline-variant/25 rounded-2xl p-8 text-center space-y-2">
+        <div className="bg-surface-container-low border border-outline-variant/25 rounded-2xl p-8 text-center space-y-3">
           <CheckCircle2 className="w-10 h-10 text-primary mx-auto opacity-80" />
           <p className="text-sm font-semibold text-on-surface">
             {t(lang, 'noTasksInTab')}
           </p>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="inline-flex items-center justify-center gap-2 px-4 min-h-[44px] rounded-full bg-primary/15 border border-primary/35 text-primary text-xs font-bold hover:bg-primary/20 active:scale-95 transition cursor-pointer"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <span>{t(lang, 'refreshNow')}</span>
+          </button>
         </div>
       ) : (
         <div className="space-y-3.5">
           {filteredTasks.map(({ item, distKm }, idx) => {
+            const isPickup = item.category === 'pickup';
+            const pickedUp = isPickup && isPickupInCustody(item);
+            const isConfirming = confirmingPickupId === item.id;
             const isFirst = idx === 0 && activeCategory === 'delivery';
             const mapsUrl = buildGoogleMapsUrl(item.lat, item.lng, item.address);
             const whatsappUrl = formatWhatsAppUrl(item.customerPhone);
+            const pickupCount = item.shipmentsCount ?? item.itemsCount ?? 1;
 
             return (
               <article
                 key={item.id}
-                className="bg-surface-container-low border border-outline-variant/25 hover:border-primary/40 rounded-2xl p-4 shadow-sm flex flex-col gap-3 transition-colors"
+                className={`bg-surface-container-low border rounded-2xl p-4 shadow-sm flex flex-col gap-3 transition-colors ${
+                  isPickup && !pickedUp
+                    ? 'border-secondary/40 hover:border-secondary/70'
+                    : 'border-outline-variant/25 hover:border-primary/40'
+                }`}
               >
                 {/* Clickable Top Section -> Opens Shipment Details */}
                 <div
@@ -302,35 +374,65 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                   }}
                   className="space-y-2.5 cursor-pointer focus:outline-none"
                 >
-                  {/* Waybill + Priority + Haversine Distance */}
+                  {/* Waybill / Batch Code + Status + Haversine Distance */}
                   <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap text-xs">
                       <span
-                        className="font-telemetry text-xs font-bold bg-surface-container-highest text-on-surface px-2.5 py-1 rounded-full tabular-nums"
+                        className="font-telemetry text-xs font-bold bg-surface-container-highest text-on-surface px-2.5 py-1 rounded-lg tabular-nums"
                         dir="ltr"
                       >
-                        #{item.trackingNumber}
+                        #{item.batchCode || item.trackingNumber}
                       </span>
 
-                      {item.priority === 'urgent' && (
-                        <span className="bg-tertiary-container text-on-tertiary-container text-[11px] font-bold px-2.5 py-1 rounded-full inline-flex items-center gap-1">
-                          <Zap className="w-3 h-3" />
-                          {t(lang, 'urgentDelivery')}
-                        </span>
-                      )}
+                      {isPickup ? (
+                        <>
+                          {item.isPickupBatch && (
+                            <span className="text-[11px] font-bold text-secondary inline-flex items-center gap-1">
+                              <Package className="w-3.5 h-3.5" />
+                              {t(lang, 'pickupBatchLabel')}
+                            </span>
+                          )}
+                          <span
+                            className={`text-[11px] font-bold inline-flex items-center gap-1 ${
+                              pickedUp ? 'text-primary' : 'text-secondary'
+                            }`}
+                          >
+                            {pickedUp ? (
+                              <PackageCheck className="w-3.5 h-3.5" />
+                            ) : (
+                              <Clock className="w-3.5 h-3.5" />
+                            )}
+                            <span>
+                              {item.statusLabel ||
+                                (pickedUp
+                                  ? t(lang, 'pickupStatusInCustody')
+                                  : t(lang, 'pickupStatusAwaiting'))}
+                            </span>
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          {item.priority === 'urgent' && (
+                            <span className="text-tertiary text-[11px] font-bold inline-flex items-center gap-1">
+                              <Zap className="w-3 h-3" />
+                              {t(lang, 'urgentDelivery')}
+                            </span>
+                          )}
 
-                      {item.priority === 'high_value' && (
-                        <span className="bg-secondary/15 text-secondary text-[11px] font-bold px-2.5 py-1 rounded-full inline-flex items-center gap-1">
-                          <Shield className="w-3 h-3" />
-                          {t(lang, 'highValue')}
-                        </span>
-                      )}
+                          {item.priority === 'high_value' && (
+                            <span className="text-secondary text-[11px] font-bold inline-flex items-center gap-1">
+                              <Shield className="w-3 h-3" />
+                              {t(lang, 'highValue')}
+                            </span>
+                          )}
 
-                      {item.priority === 'normal' && item.timeWindow && (
-                        <span className="bg-surface-container text-on-surface-variant text-[11px] font-medium px-2.5 py-1 rounded-full inline-flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {item.timeWindow}
-                        </span>
+                          {item.priority === 'normal' && (item.statusLabel || item.timeWindow) && (
+                            <span className="text-on-surface-variant text-[11px] font-medium inline-flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {item.statusLabel || item.timeWindow}
+                            </span>
+                          )}
+                        </>
                       )}
                     </div>
 
@@ -342,39 +444,90 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                     )}
                   </div>
 
-                  {/* Customer Name & Address */}
+                  {/* Merchant / Customer Name & Address */}
                   <div className="space-y-1">
                     <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2">
-                      <User className="w-4 h-4 text-primary shrink-0" />
+                      {isPickup ? (
+                        <Store className="w-4 h-4 text-secondary shrink-0" />
+                      ) : (
+                        <User className="w-4 h-4 text-primary shrink-0" />
+                      )}
                       <span className="truncate">{item.customerName}</span>
                     </h3>
-                    <p className="text-xs sm:text-sm text-on-surface-variant flex items-start gap-1.5 leading-relaxed">
-                      <MapPin className="w-4 h-4 text-outline shrink-0 mt-0.5" />
-                      <span>{item.address}</span>
-                    </p>
+                    {item.address && (
+                      <p className="text-xs sm:text-sm text-on-surface-variant flex items-start gap-1.5 leading-relaxed">
+                        <MapPin className="w-4 h-4 text-outline shrink-0 mt-0.5" />
+                        <span>{item.address}</span>
+                      </p>
+                    )}
                   </div>
 
-                  {/* COD / Prepaid Strip */}
-                  <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-surface-container border border-outline-variant/20">
-                    {item.isPrepaid || item.codAmount <= 0 ? (
-                      <div className="flex items-center gap-2 text-primary text-xs font-bold">
-                        <CheckCircle2 className="w-4 h-4 shrink-0" />
-                        <span>{t(lang, 'prepaid')}</span>
-                      </div>
-                    ) : (
+                  {/* Pickup Summary OR COD / Prepaid Strip */}
+                  {isPickup ? (
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-surface-container border border-outline-variant/20">
                       <div className="flex items-center gap-2 text-secondary text-xs font-bold">
-                        <Banknote className="w-4 h-4 shrink-0" />
-                        <span>{t(lang, 'codCollect')}:</span>
-                        <span className="font-telemetry text-sm font-extrabold tabular-nums">
-                          {item.codAmount.toLocaleString('en-US')} {t(lang, 'currency')}
+                        <Package className="w-4 h-4 shrink-0" />
+                        <span className="tabular-nums">
+                          {t(lang, 'pickupShipmentsCount', { count: pickupCount })}
                         </span>
                       </div>
-                    )}
-                    <span className="text-[11px] font-semibold text-primary whitespace-nowrap">
-                      {t(lang, 'tapForDetails')}
-                    </span>
-                  </div>
+                      <span className="text-[11px] font-semibold text-primary whitespace-nowrap">
+                        {t(lang, 'shipmentDetailsBtn')}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-surface-container border border-outline-variant/20">
+                      {item.isPrepaid || item.codAmount <= 0 ? (
+                        <div className="flex items-center gap-2 text-primary text-xs font-bold">
+                          <CheckCircle2 className="w-4 h-4 shrink-0" />
+                          <span>{t(lang, 'prepaid')}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-secondary text-xs font-bold">
+                          <Banknote className="w-4 h-4 shrink-0" />
+                          <span>{t(lang, 'codCollect')}:</span>
+                          <span className="font-telemetry text-sm font-extrabold tabular-nums">
+                            {item.codAmount.toLocaleString('en-US')} {t(lang, 'currency')}
+                          </span>
+                        </div>
+                      )}
+                      <span className="text-[11px] font-semibold text-primary whitespace-nowrap">
+                        {t(lang, 'tapForDetails')}
+                      </span>
+                    </div>
+                  )}
                 </div>
+
+                {/* Direct Confirm Pickup CTA for Pickup Orders & Batches */}
+                {isPickup && (
+                  <div>
+                    {pickedUp ? (
+                      <div className="w-full min-h-[44px] px-3 py-2 rounded-xl bg-primary/12 border border-primary/30 text-primary text-xs font-bold flex items-center justify-center gap-2">
+                        <PackageCheck className="w-4 h-4 shrink-0" />
+                        <span>{t(lang, 'pickupConfirmedBadge')}</span>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isConfirming}
+                        onClick={() => onConfirmPickup(item)}
+                        className="w-full min-h-[48px] px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-fixed active:scale-[0.98] text-on-primary text-sm font-bold flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-70 cursor-pointer"
+                      >
+                        {isConfirming ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                            <span>{t(lang, 'confirmingPickup')}</span>
+                          </>
+                        ) : (
+                          <>
+                            <PackageCheck className="w-4 h-4 shrink-0" />
+                            <span>{t(lang, 'confirmPickupBtn')}</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 {/* 3-Button Thumb-Sized Driver Action Corridor */}
                 <div className="grid grid-cols-3 gap-2 pt-0.5">
