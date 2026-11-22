@@ -16,7 +16,6 @@ import {
   LogOut,
   MapPin,
   Moon,
-  Radio,
   Star,
   Sun,
   Truck,
@@ -34,11 +33,9 @@ interface ProfileScreenProps {
   courier: CourierProfile;
   lang: Language;
   theme: ThemeMode;
-  shiftActive: boolean;
   soundEnabled: boolean;
   onChangeLanguage: (lang: Language) => void;
   onToggleTheme: () => void;
-  onToggleShift: () => void;
   onToggleSound: () => void;
   onLogout: () => Promise<void>;
 }
@@ -47,11 +44,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   courier,
   lang,
   theme,
-  shiftActive,
   soundEnabled,
   onChangeLanguage,
   onToggleTheme,
-  onToggleShift,
   onToggleSound,
   onLogout,
 }) => {
@@ -123,27 +118,25 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               <span className="truncate">{courier.vehicle}</span>
             </div>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-container-high self-start mt-2.5">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  shiftActive ? 'bg-primary' : 'bg-outline'
-                }`}
-              />
+              <span className="w-2 h-2 rounded-full bg-primary" />
               <span className="text-[11px] font-bold text-primary">
-                {shiftActive
-                  ? courier.shiftLabel
-                  : t(lang, 'shiftPaused')}
+                {t(lang, 'connectedReady')}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Depot / Zone Strip */}
+        {/* Real Server Branch Strip */}
         <div className="mt-4 flex items-center justify-between gap-2 bg-surface-container rounded-2xl px-3.5 py-2.5 text-xs text-on-surface-variant">
           <div className="flex items-center gap-1.5 min-w-0">
             <MapPin className="w-4 h-4 text-primary shrink-0" />
-            <span className="truncate">{courier.branch}</span>
+            <span className="truncate font-semibold text-on-surface">
+              {t(lang, 'branchLabel')}: {courier.branch?.trim() || t(lang, 'unassignedBranch')}
+            </span>
           </div>
-          <span className="text-primary font-bold shrink-0">{courier.zoneTag}</span>
+          {courier.zoneTag && courier.zoneTag !== 'النطاق A' && (
+            <span className="text-primary font-bold shrink-0">{courier.zoneTag}</span>
+          )}
         </div>
       </section>
 
@@ -332,36 +325,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <Sun className="w-3 h-3 text-secondary" />
               )}
             </span>
-          </button>
-        </div>
-
-        {/* Active Shift GPS Sync Toggle */}
-        <div className="flex items-center justify-between p-3 gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center text-primary shrink-0">
-              <Radio className="w-4 h-4" />
-            </div>
-            <div className="flex flex-col min-w-0">
-              <span className="text-sm font-bold text-on-surface truncate">
-                {t(lang, 'shiftTrackingSetting')}
-              </span>
-              <span className="text-xs text-on-surface-variant truncate">
-                {t(lang, 'shiftTrackingSub')}
-              </span>
-            </div>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={shiftActive}
-            onClick={onToggleShift}
-            className={`w-13 h-7 rounded-full p-1 flex items-center transition-colors cursor-pointer shrink-0 ${
-              shiftActive
-                ? 'bg-primary justify-end'
-                : 'bg-surface-container-highest justify-start'
-            }`}
-          >
-            <span className="w-5 h-5 rounded-full bg-on-primary shadow-sm" />
           </button>
         </div>
 

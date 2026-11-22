@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, Lock, Radio } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import webstackLogo from '../assets/webstack-logo.png';
 import { CourierProfile, Language } from '../types/courier';
 import { t } from '../i18n/translations';
@@ -8,8 +8,7 @@ interface AppHeaderProps {
   title: string;
   courier: CourierProfile;
   lang: Language;
-  shiftActive: boolean;
-  isDemo?: boolean;
+  isOnline?: boolean;
   showBack?: boolean;
   onBack?: () => void;
   onAvatarClick?: () => void;
@@ -19,8 +18,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   title,
   courier,
   lang,
-  shiftActive,
-  isDemo,
+  isOnline = true,
   showBack,
   onBack,
   onAvatarClick,
@@ -61,7 +59,6 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           <div className="flex flex-col min-w-0">
             <span className="text-[11px] text-on-surface-variant font-medium leading-none truncate">
               {t(lang, 'appShort')}
-              {isDemo ? ` · ${t(lang, 'demoBanner')}` : ''}
             </span>
             <h1 className="font-display text-base font-bold text-on-surface truncate leading-tight mt-0.5">
               {title}
@@ -72,14 +69,17 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
         <div className="flex items-center gap-2 shrink-0">
           <span
             className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border whitespace-nowrap ${
-              shiftActive
+              isOnline
                 ? 'bg-primary/15 border-primary/30 text-primary'
                 : 'bg-surface-container-high border-outline-variant/40 text-on-surface-variant'
             }`}
           >
-            <Radio className={`w-3.5 h-3.5 ${shiftActive ? 'text-primary' : 'text-outline'}`} />
-            <span>{shiftActive ? t(lang, 'online') : t(lang, 'offline')}</span>
-            {shiftActive && <Lock className="w-3 h-3 opacity-75" />}
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                isOnline ? 'bg-primary' : 'bg-outline'
+              }`}
+            />
+            <span>{isOnline ? t(lang, 'online') : t(lang, 'offline')}</span>
           </span>
 
           <button

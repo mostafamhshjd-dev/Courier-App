@@ -3,14 +3,12 @@ import {
   Banknote,
   CheckCircle2,
   Clock,
-  Loader2,
   MapPin,
   MessageCircle,
   Navigation,
   Package,
   PackageCheck,
   Phone,
-  Power,
   RefreshCw,
   Shield,
   Store,
@@ -32,16 +30,16 @@ import {
   formatDistance,
   formatWhatsAppUrl,
 } from '../utils/geo';
+import { PullToRefresh } from '../components/PullToRefresh';
 
 interface TasksScreenProps {
   courier: CourierProfile;
   tasks: ShipmentTask[];
   cashCustody: number;
   courierLocation: GeoPoint;
-  shiftActive: boolean;
+  isOnline?: boolean;
   loading: boolean;
   lang: Language;
-  onToggleShift: () => void;
   onRefresh: () => void;
   onSelectShipment: (shipment: ShipmentTask) => void;
   onOpenOnMap: (shipment: ShipmentTask) => void;
@@ -69,10 +67,9 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
   tasks,
   cashCustody,
   courierLocation,
-  shiftActive,
+  isOnline = true,
   loading,
   lang,
-  onToggleShift,
   onRefresh,
   onSelectShipment,
   onOpenOnMap,
@@ -142,57 +139,61 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         ? t(lang, 'upcomingReturns')
         : t(lang, 'upcomingShipments');
 
+  const branchDisplay = courier.branch?.trim() || t(lang, 'unassignedBranch');
+
   return (
-    <div className="w-full max-w-2xl mx-auto px-4 pt-3 pb-28 space-y-4">
-      {/* Driver Header Briefing + Active Shift GPS Toggle */}
-      <section className="bg-surface-container-low border border-outline-variant/25 rounded-2xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="relative shrink-0">
-            <div className="w-12 h-12 rounded-full bg-surface-container-high ring-2 ring-primary/60 flex items-center justify-center overflow-hidden text-sm font-bold text-primary">
-              {courier.avatarUrl ? (
-                <img
-                  src={courier.avatarUrl}
-                  alt={courier.name}
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <span>{firstName.slice(0, 2)}</span>
-              )}
+    <PullToRefresh lang={lang} refreshing={loading} onRefresh={onRefresh}>
+      <div className="w-full max-w-2xl mx-auto px-4 pt-3 pb-28 space-y-4">
+        {/* Driver Header Briefing + Operational Ready Badge */}
+        <section className="bg-surface-container-low border border-outline-variant/25 rounded-2xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="relative shrink-0">
+              <div className="w-12 h-12 rounded-full bg-surface-container-high ring-2 ring-primary/60 flex items-center justify-center overflow-hidden text-sm font-bold text-primary">
+                {courier.avatarUrl ? (
+                  <img
+                    src={courier.avatarUrl}
+                    alt={courier.name}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span>{firstName.slice(0, 2)}</span>
+                )}
+              </div>
+              <span
+                className={`absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full ring-2 ring-surface-container-low ${
+                  isOnline ? 'bg-primary' : 'bg-outline'
+                }`}
+              />
             </div>
+
+            <div className="flex flex-col min-w-0">
+              <span className="font-display text-base sm:text-lg font-bold text-on-surface truncate">
+                {t(lang, 'welcomeCaptain')} {firstName}
+              </span>
+              <span className="text-xs text-on-surface-variant truncate">
+                {t(lang, 'branchLabel')}: {branchDisplay}
+              </span>
+            </div>
+          </div>
+
+          <div
+            className={`inline-flex items-center gap-2 px-3.5 min-h-[36px] rounded-full border text-xs font-bold shrink-0 ${
+              isOnline
+                ? 'bg-primary/15 border-primary/35 text-primary'
+                : 'bg-surface-container-high border-outline-variant/40 text-on-surface-variant'
+            }`}
+          >
             <span
-              className={`absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full ring-2 ring-surface-container-low ${
-                shiftActive ? 'bg-primary' : 'bg-outline'
+              className={`w-2 h-2 rounded-full shrink-0 ${
+                isOnline ? 'bg-primary' : 'bg-outline'
               }`}
             />
-          </div>
-
-          <div className="flex flex-col min-w-0">
-            <span className="font-display text-base sm:text-lg font-bold text-on-surface truncate">
-              {t(lang, 'welcomeCaptain')} {firstName}
-            </span>
-            <span className="text-xs text-on-surface-variant truncate">
-              {t(lang, 'workZone')}: {courier.zone}
+            <span className="whitespace-nowrap">
+              {isOnline ? t(lang, 'readyForWork') : t(lang, 'offline')}
             </span>
           </div>
-        </div>
-
-        {/* Interactive Shift / Live GPS Toggle */}
-        <button
-          type="button"
-          onClick={onToggleShift}
-          className={`inline-flex items-center gap-2 px-3.5 min-h-[40px] rounded-full border text-xs font-bold transition-all active:scale-95 cursor-pointer shrink-0 ${
-            shiftActive
-              ? 'bg-primary/15 border-primary/40 text-primary shadow-sm'
-              : 'bg-surface-container-high border-outline-variant/40 text-on-surface-variant'
-          }`}
-        >
-          <Power className="w-3.5 h-3.5 shrink-0" />
-          <span className="whitespace-nowrap">
-            {shiftActive ? t(lang, 'shiftActiveGps') : t(lang, 'shiftPaused')}
-          </span>
-        </button>
-      </section>
+        </section>
 
       {/* Realtime Telemetry KPI Strip */}
       <section className="grid grid-cols-2 gap-3">
@@ -623,6 +624,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
         <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />
         <span>{t(lang, 'allSynced')}</span>
       </div>
-    </div>
+      </div>
+    </PullToRefresh>
   );
 };

@@ -29,7 +29,6 @@ import {
 interface SmartMapScreenProps {
   tasks: ShipmentTask[];
   courierLocation: GeoPoint;
-  gpsIsLive: boolean;
   lang: Language;
   theme: ThemeMode;
   focusedTaskId?: string | null;
@@ -70,7 +69,6 @@ function escapeHtml(text: string): string {
 export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
   tasks,
   courierLocation,
-  gpsIsLive,
   lang,
   theme,
   focusedTaskId = null,
@@ -776,9 +774,9 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
         </div>
       )}
 
-      {/* Compact GPS Status Chip + Re-center Button during Active Navigation */}
-      <div className="absolute ltr:right-3 rtl:left-3 bottom-[228px] z-20 flex flex-col items-end gap-2 pointer-events-none">
-        {isNavigating && (
+      {/* Re-center Button during Active Navigation */}
+      {isNavigating && (
+        <div className="absolute ltr:right-3 rtl:left-3 bottom-[228px] z-20 flex flex-col items-end gap-2 pointer-events-none">
           <button
             type="button"
             onClick={handleRecenter}
@@ -787,11 +785,8 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
           >
             <Crosshair className="w-5 h-5" />
           </button>
-        )}
-        <span className="px-2.5 py-1 rounded-full bg-surface-container-low/90 backdrop-blur-md border border-outline-variant/30 text-[10px] font-bold text-on-surface-variant">
-          {gpsIsLive ? t(lang, 'gpsLiveActive') : t(lang, 'gpsSimulated')}
-        </span>
-      </div>
+        </div>
+      )}
 
       {/* BOTTOM FLOATING COCKPIT CARD */}
       <div className="absolute bottom-3 inset-x-3 z-20 pointer-events-auto">

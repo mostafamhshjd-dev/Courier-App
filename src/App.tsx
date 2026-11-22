@@ -46,6 +46,7 @@ import {
 import { CustodyScreen } from './screens/CustodyScreen';
 import { SmartMapScreen } from './screens/SmartMapScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
+import { startSilentLocationService } from './services/backgroundLocation';
 
 function playFeedbackChime() {
   try {
@@ -91,14 +92,9 @@ export default function App() {
   const [courier, setCourier] = useState<CourierProfile>(() => getStoredCourier() || DEMO_COURIER);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('tasks');
-  const [shiftActive, setShiftActive] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.SHIFT_ACTIVE);
-      return saved === null ? true : saved === 'true';
-    } catch {
-      return true;
-    }
-  });
+  const [isOnline, setIsOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine !== false : true
+  );
   const [soundEnabled, setSoundEnabled] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.SOUND_ENABLED);
@@ -135,11 +131,15 @@ export default function App() {
   const [focusedMapTaskId, setFocusedMapTaskId] = useState<string | null>(null);
 
   const [courierLocation, setCourierLocation] = useState<GeoPoint>(DEFAULT_CAIRO_COORDS);
-  const [gpsIsLive, setGpsIsLive] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
   const toastTimerRef = useRef<number | null>(null);
-  const lastLocationSyncRef = useRef<number>(0);
+  const knownTaskIdsRef = useRef<Set<string>>(new Set());
+  const tasksBaselineReadyRef = useRef<boolean>(false);
+  const tasksInFlightRef = useRef<boolean>(false);
+  const custodyInFlightRef = useRef<boolean>(false);
+  const soundEnabledRef = useRef<boolean>(soundEnabled);
+  soundEnabledRef.current = soundEnabled;
 
   const notify = useCallback(
     (text: string, variant: 'success' | 'info' | 'error' = 'success') => {
@@ -191,112 +191,226 @@ export default function App() {
     return () => setUnauthorizedHandler(null);
   }, [lang, notify]);
 
-  // Fetch tasks from GET /courier/tasks.php
-  const loadTasks = useCallback(async () => {
-    setTasksLoading(true);
-    try {
-      const raw = await webstackApi.getTasks();
-      const parsed = normalizeTasksResponse(raw);
-      setTasks(parsed.tasks);
-      if (parsed.cashCustody !== undefined) {
-        setCustody((prev) => ({ ...prev, totalCodCash: parsed.cashCustody as number }));
-      }
-      if (parsed.completedToday !== undefined || parsed.totalToday !== undefined) {
-        setCourier((prev) => ({
-          ...prev,
-          completedToday: parsed.completedToday ?? prev.completedToday,
-          totalToday: parsed.totalToday ?? prev.totalToday,
-        }));
-      }
-    } catch (err) {
-      if ((err as { status?: number })?.status !== 401) {
-        notify(
-          lang === 'ar' ? 'تعذر تحديث قائمة المهام من الخادم' : 'Could not refresh tasks from server',
-          'error'
-        );
-      }
-    } finally {
-      setTasksLoading(false);
-    }
-  }, [lang, notify]);
-
-  // Fetch custody from GET /courier/custody.php
-  const loadCustody = useCallback(async () => {
-    setCustodyLoading(true);
-    try {
-      const raw = await webstackApi.getCustody();
-      setCustody(normalizeCustodyResponse(raw));
-    } catch (err) {
-      if ((err as { status?: number })?.status !== 401) {
-        notify(
-          lang === 'ar' ? 'تعذر تحميل بيانات العهدة' : 'Could not load custody summary',
-          'error'
-        );
-      }
-    } finally {
-      setCustodyLoading(false);
-    }
-  }, [lang, notify]);
-
-  // Load initial data after sign in
+  // Track network connectivity for normal online/offline badge
   useEffect(() => {
-    if (!isAuthenticated) return;
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
+  // Fetch tasks from GET /courier/tasks.php (supports silent Smart Auto-Sync)
+  const loadTasks = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = Boolean(options?.silent);
+      if (tasksInFlightRef.current) return;
+      tasksInFlightRef.current = true;
+      if (!silent) setTasksLoading(true);
+      try {
+        const raw = await webstackApi.getTasks();
+        const parsed = normalizeTasksResponse(raw);
+
+        // Detect newly assigned tasks after initial baseline load
+        const incomingActive = parsed.tasks.filter(
+          (item) =>
+            item.category === 'pickup' || (item.status !== 'delivered' && item.statusId !== 8)
+        );
+
+        if (tasksBaselineReadyRef.current) {
+          let newCount = 0;
+          incomingActive.forEach((item) => {
+            if (!knownTaskIdsRef.current.has(item.id)) {
+              newCount += 1;
+            }
+          });
+          if (newCount > 0) {
+            try {
+              if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+                navigator.vibrate([120, 60, 120]);
+              }
+            } catch {
+              // Ignore vibration restrictions
+            }
+            if (soundEnabledRef.current) {
+              playFeedbackChime();
+            }
+            notify(
+              newCount === 1
+                ? t(lang, 'newTaskArrived')
+                : t(lang, 'newTasksArrived', { count: newCount }),
+              'info'
+            );
+          }
+        } else {
+          tasksBaselineReadyRef.current = true;
+        }
+
+        knownTaskIdsRef.current = new Set(parsed.tasks.map((item) => item.id));
+        setTasks(parsed.tasks);
+
+        // Keep currently viewed shipment/pickup batch in sync with latest server data
+        setSelectedShipment((prev) => {
+          if (!prev) return prev;
+          const updated = parsed.tasks.find((item) => item.id === prev.id);
+          return updated ? { ...prev, ...updated } : prev;
+        });
+
+        if (parsed.cashCustody !== undefined) {
+          setCustody((prev) => ({ ...prev, totalCodCash: parsed.cashCustody as number }));
+        }
+
+        if (
+          parsed.completedToday !== undefined ||
+          parsed.totalToday !== undefined ||
+          parsed.branchName
+        ) {
+          setCourier((prev) => {
+            const nextCourier: CourierProfile = {
+              ...prev,
+              completedToday: parsed.completedToday ?? prev.completedToday,
+              totalToday: parsed.totalToday ?? prev.totalToday,
+              branch: parsed.branchName || prev.branch,
+            };
+            if (parsed.branchName && parsed.branchName !== prev.branch) {
+              saveAuthSession(getAuthToken(), nextCourier, false);
+            }
+            return nextCourier;
+          });
+        }
+      } catch (err) {
+        if (!silent && (err as { status?: number })?.status !== 401) {
+          notify(
+            lang === 'ar'
+              ? 'تعذر تحديث قائمة المهام من الخادم'
+              : 'Could not refresh tasks from server',
+            'error'
+          );
+        }
+      } finally {
+        tasksInFlightRef.current = false;
+        if (!silent) setTasksLoading(false);
+      }
+    },
+    [lang, notify]
+  );
+
+  // Fetch custody from GET /courier/custody.php (supports silent Smart Auto-Sync)
+  const loadCustody = useCallback(
+    async (options?: { silent?: boolean }) => {
+      const silent = Boolean(options?.silent);
+      if (custodyInFlightRef.current) return;
+      custodyInFlightRef.current = true;
+      if (!silent) setCustodyLoading(true);
+      try {
+        const raw = await webstackApi.getCustody();
+        setCustody(normalizeCustodyResponse(raw));
+      } catch (err) {
+        if (!silent && (err as { status?: number })?.status !== 401) {
+          notify(
+            lang === 'ar' ? 'تعذر تحميل بيانات العهدة' : 'Could not load custody summary',
+            'error'
+          );
+        }
+      } finally {
+        custodyInFlightRef.current = false;
+        if (!silent) setCustodyLoading(false);
+      }
+    },
+    [lang, notify]
+  );
+
+  // Smart Auto-Sync:
+  // - Initial load on sign in
+  // - Silent 10s polling ONLY while app is visible (pauses when visibilityState === 'hidden')
+  // - Immediate silent sync on visibilitychange (visible), window focus, and network online
+  useEffect(() => {
+    if (!isAuthenticated) {
+      tasksBaselineReadyRef.current = false;
+      knownTaskIdsRef.current = new Set();
+      return;
+    }
+
     loadTasks();
     loadCustody();
-  }, [isAuthenticated, loadTasks, loadCustody]);
 
-  // Live GPS Watch + periodic POST /courier/location.php when shiftActive is ON
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) return;
+    let pollTimer: number | null = null;
 
-    const sendCoordsIfDue = (pt: GeoPoint) => {
-      if (!shiftActive) return;
-      const now = Date.now();
-      if (now - lastLocationSyncRef.current < 20000) return;
-      lastLocationSyncRef.current = now;
-      webstackApi
-        .sendLocation({
-          lat: pt.lat,
-          lng: pt.lng,
-          accuracy: pt.accuracy,
-          heading: pt.heading,
-          speed: pt.speed,
-          timestamp: new Date(pt.timestamp).toISOString(),
-        })
-        .catch(() => {
-          // Silent retry on next interval
-        });
+    const triggerSilentSync = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      loadTasks({ silent: true });
+      loadCustody({ silent: true });
     };
 
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const pt: GeoPoint = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-          heading: pos.coords.heading,
-          speed: pos.coords.speed,
-          timestamp: pos.timestamp,
-        };
-        setCourierLocation(pt);
-        setGpsIsLive(true);
-        sendCoordsIfDue(pt);
-      },
-      () => {
-        setGpsIsLive(false);
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 5000,
-        timeout: 15000,
+    const startPolling = () => {
+      if (pollTimer !== null) return;
+      pollTimer = window.setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          loadTasks({ silent: true });
+          loadCustody({ silent: true });
+        }
+      }, 10_000);
+    };
+
+    const stopPolling = () => {
+      if (pollTimer !== null) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
       }
-    );
+    };
+
+    if (document.visibilityState === 'visible') {
+      startPolling();
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        triggerSilentSync();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+
+    const handleFocus = () => {
+      triggerSilentSync();
+      if (document.visibilityState === 'visible') {
+        startPolling();
+      }
+    };
+
+    const handleOnline = () => {
+      triggerSilentSync();
+      if (document.visibilityState === 'visible') {
+        startPolling();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('online', handleOnline);
 
     return () => {
-      navigator.geolocation.clearWatch(watchId);
+      stopPolling();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('online', handleOnline);
     };
-  }, [isAuthenticated, shiftActive]);
+  }, [isAuthenticated, loadTasks, loadCustody]);
+
+  // Always-on silent Background Geolocation service (Android foreground service + 30s / 50m updates)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const handle = startSilentLocationService((point) => {
+      setCourierLocation(point);
+    });
+    return () => {
+      handle.stop();
+    };
+  }, [isAuthenticated]);
 
   // Login Handler -> POST /auth/login.php
   const handleLoginSubmit = async (identifier: string, password: string) => {
@@ -335,39 +449,6 @@ export default function App() {
     setSelectedShipment(null);
     setOutcomeTarget(null);
     setActiveTab('tasks');
-  };
-
-  const handleToggleShift = () => {
-    setShiftActive((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(STORAGE_KEYS.SHIFT_ACTIVE, String(next));
-      } catch {
-        // ignore
-      }
-      if (next) {
-        webstackApi
-          .sendLocation({
-            lat: courierLocation.lat,
-            lng: courierLocation.lng,
-            accuracy: courierLocation.accuracy,
-            heading: courierLocation.heading,
-            timestamp: new Date().toISOString(),
-          })
-          .catch(() => {});
-      }
-      notify(
-        next
-          ? lang === 'ar'
-            ? 'تم تفعيل الشفت وإرسال الموقع الحي'
-            : 'Shift started — live GPS sync enabled'
-          : lang === 'ar'
-            ? 'تم إيقاف تتبع الشفت مؤقتاً'
-            : 'Shift GPS sync paused',
-        'info'
-      );
-      return next;
-    });
   };
 
   const handleToggleSound = () => {
@@ -481,8 +562,8 @@ export default function App() {
       setOutcomeTarget(null);
       setSelectedShipment(null);
 
-      loadTasks();
-      loadCustody();
+      loadTasks({ silent: true });
+      loadCustody({ silent: true });
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -551,8 +632,8 @@ export default function App() {
 
       if (soundEnabled) playFeedbackChime();
       notify(t(lang, 'pickupConfirmedToast'), 'success');
-      loadTasks();
-      loadCustody();
+      loadTasks({ silent: true });
+      loadCustody({ silent: true });
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -571,8 +652,8 @@ export default function App() {
       if (task.lat === null || task.lng === null) {
         notify(
           lang === 'ar'
-            ? 'لا تتوفر إحداثيات GPS لهذا التاجر حالياً'
-            : 'No GPS coordinates available for this merchant yet',
+            ? 'لا تتوفر إحداثيات موقع لهذا التاجر حالياً'
+            : 'No location coordinates available for this merchant yet',
           'info'
         );
         return;
@@ -671,7 +752,7 @@ export default function App() {
         title={headerTitle}
         courier={courier}
         lang={lang}
-        shiftActive={shiftActive}
+        isOnline={isOnline}
         showBack={Boolean(selectedShipment)}
         onBack={() => setSelectedShipment(null)}
         onAvatarClick={() => {
@@ -705,11 +786,13 @@ export default function App() {
             tasks={tasks}
             cashCustody={effectiveCustody.totalCodCash}
             courierLocation={courierLocation}
-            shiftActive={shiftActive}
+            isOnline={isOnline}
             loading={tasksLoading}
             lang={lang}
-            onToggleShift={handleToggleShift}
-            onRefresh={loadTasks}
+            onRefresh={() => {
+              loadTasks();
+              loadCustody({ silent: true });
+            }}
             onSelectShipment={handleOpenShipmentDetails}
             onOpenOnMap={handleOpenTaskOnMap}
           />
@@ -717,7 +800,6 @@ export default function App() {
           <SmartMapScreen
             tasks={tasks}
             courierLocation={courierLocation}
-            gpsIsLive={gpsIsLive}
             lang={lang}
             theme={theme}
             focusedTaskId={focusedMapTaskId}
@@ -732,7 +814,7 @@ export default function App() {
             lang={lang}
             loading={custodyLoading}
             onRefresh={() => {
-              loadTasks();
+              loadTasks({ silent: true });
               loadCustody();
             }}
           />
@@ -741,11 +823,9 @@ export default function App() {
             courier={courier}
             lang={lang}
             theme={theme}
-            shiftActive={shiftActive}
             soundEnabled={soundEnabled}
             onChangeLanguage={setLang}
             onToggleTheme={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-            onToggleShift={handleToggleShift}
             onToggleSound={handleToggleSound}
             onLogout={handleLogout}
           />

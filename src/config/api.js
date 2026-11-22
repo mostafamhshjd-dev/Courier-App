@@ -87,17 +87,18 @@ export async function apiRequest(endpoint, options = {}) {
     ? endpoint
     : `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
+  const params = new URLSearchParams();
   if (query && typeof query === 'object') {
-    const params = new URLSearchParams();
     Object.entries(query).forEach(([key, val]) => {
       if (val !== undefined && val !== null && val !== '') {
         params.append(key, String(val));
       }
     });
-    const qs = params.toString();
-    if (qs) {
-      url += (url.includes('?') ? '&' : '?') + qs;
-    }
+  }
+  params.set('_t', String(Date.now()));
+  const qs = params.toString();
+  if (qs) {
+    url += (url.includes('?') ? '&' : '?') + qs;
   }
 
   const headers = {
@@ -123,6 +124,7 @@ export async function apiRequest(endpoint, options = {}) {
   try {
     response = await fetch(url, {
       credentials: 'include',
+      cache: 'no-store',
       ...rest,
       headers,
       body: isFormData

@@ -26,6 +26,38 @@ function toNullableNumber(value: unknown): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function pickNonEmptyString(...values: unknown[]): string {
+  for (const val of values) {
+    if (typeof val === 'string') {
+      const trimmed = val.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return '';
+}
+
+export function extractBranchName(...sources: Array<AnyRecord | null | undefined>): string {
+  for (const src of sources) {
+    if (!src || typeof src !== 'object') continue;
+    const branchObj = src.branch && typeof src.branch === 'object' ? src.branch : null;
+    const hubObj = src.hub && typeof src.hub === 'object' ? src.hub : null;
+    const found = pickNonEmptyString(
+      src.branch_name,
+      src.branch_name_ar,
+      branchObj?.name,
+      branchObj?.branch_name,
+      branchObj?.name_ar,
+      branchObj?.title,
+      typeof src.branch === 'string' ? src.branch : '',
+      src.hub_name,
+      hubObj?.name,
+      src.depot_name
+    );
+    if (found) return found;
+  }
+  return '';
+}
+
 export function extractAuthPayload(raw: AnyRecord): {
   token: string;
   courier: CourierProfile;
@@ -45,21 +77,25 @@ export function extractAuthPayload(raw: AnyRecord): {
   const token = rawToken.replace(/^Bearer\s+/i, '').trim();
 
   const u = container.user || container.courier || container.profile || container;
+  const branchName = extractBranchName(u, container, raw);
+  const zoneName = pickNonEmptyString(u.zone, u.area, u.region, branchName);
+  const zoneTag = pickNonEmptyString(u.zone_tag, u.sector);
+
   const courier: CourierProfile = {
     id: String(u.id ?? u.courier_id ?? DEMO_COURIER.id),
     name: String(u.name ?? u.full_name ?? u.courier_name ?? DEMO_COURIER.name),
     code: String(u.code ?? u.employee_code ?? `#CP-${u.id ?? '1048'}`),
     phone: String(u.phone ?? u.mobile ?? u.username ?? ''),
-    zone: String(u.zone ?? u.area ?? u.region ?? DEMO_COURIER.zone),
-    branch: String(u.branch ?? u.hub_name ?? u.branch_name ?? DEMO_COURIER.branch),
-    zoneTag: String(u.zone_tag ?? u.sector ?? DEMO_COURIER.zoneTag),
+    zone: zoneName,
+    branch: branchName,
+    zoneTag,
     vehicle: String(u.vehicle ?? u.vehicle_info ?? DEMO_COURIER.vehicle),
-    shiftLabel: String(u.shift_label ?? u.shift_name ?? DEMO_COURIER.shiftLabel),
+    shiftLabel: pickNonEmptyString(u.shift_label, u.shift_name, 'متصل • جاهز للعمل'),
     avatarUrl: u.avatar || u.avatar_url || u.photo || undefined,
     deliveryRate: toNumber(u.delivery_rate ?? u.success_rate, DEMO_COURIER.deliveryRate),
     deliveryRateDelta: String(u.delivery_rate_delta ?? '+2.4%'),
-    completedToday: toNumber(u.completed_today ?? u.delivered_today, DEMO_COURIER.completedToday),
-    totalToday: toNumber(u.total_today ?? u.assigned_today, DEMO_COURIER.totalToday),
+    completedToday: toNumber(u.completed_today ?? u.delivered_today, 0),
+    totalToday: toNumber(u.total_today ?? u.assigned_today, 0),
     rating: toNumber(u.rating, DEMO_COURIER.rating),
     ratingCount: toNumber(u.rating_count ?? u.reviews_count, DEMO_COURIER.ratingCount),
     weeklyCompleted: toNumber(u.weekly_completed, DEMO_COURIER.weeklyCompleted),
@@ -472,6 +508,7 @@ export function normalizeTasksResponse(raw: AnyRecord): {
   cashCustody?: number;
   completedToday?: number;
   totalToday?: number;
+  branchName?: string;
 } {
   const payload = raw?.data ?? raw ?? {};
   const collected: ShipmentTask[] = [];
@@ -600,6 +637,16 @@ export function normalizeTasksResponse(raw: AnyRecord): {
     mergedTasks.push(tItem);
   });
 
+  const branchName = extractBranchName(
+    payload.courier,
+    payload.user,
+    payload.profile,
+    payload,
+    raw?.courier,
+    raw?.user,
+    raw
+  );
+
   return {
     tasks: mergedTasks,
     cashCustody:
@@ -609,6 +656,7 @@ export function normalizeTasksResponse(raw: AnyRecord): {
     completedToday:
       payload.completed_today !== undefined ? toNumber(payload.completed_today, 0) : undefined,
     totalToday: payload.total_today !== undefined ? toNumber(payload.total_today, 0) : undefined,
+    branchName: branchName || undefined,
   };
 }
 

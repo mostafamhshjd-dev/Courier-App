@@ -14,6 +14,7 @@ import {
 import { CustodyParcel, CustodySummary, Language } from '../types/courier';
 import { t } from '../i18n/translations';
 import { BarcodeModal } from '../components/BarcodeModal';
+import { PullToRefresh } from '../components/PullToRefresh';
 
 interface CustodyScreenProps {
   custody: CustodySummary;
@@ -53,7 +54,8 @@ export const CustodyScreen: React.FC<CustodyScreenProps> = ({
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto px-4 pt-3 pb-28 space-y-5">
+    <PullToRefresh lang={lang} refreshing={loading} onRefresh={onRefresh}>
+      <div className="w-full max-w-2xl mx-auto px-4 pt-3 pb-28 space-y-5">
       {/* Context & Refresh Row */}
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs sm:text-sm font-semibold text-on-surface-variant">
@@ -280,6 +282,7 @@ export const CustodyScreen: React.FC<CustodyScreenProps> = ({
         lang={lang}
         onClose={() => setModalState((prev) => ({ ...prev, open: false }))}
       />
-    </div>
+      </div>
+    </PullToRefresh>
   );
 };
