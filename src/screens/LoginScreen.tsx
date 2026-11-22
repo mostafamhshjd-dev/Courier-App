@@ -35,11 +35,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [showSupportModal, setShowSupportModal] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
+    setErrorDetail(null);
     if (!identifier.trim() || !password.trim()) {
       setErrorMsg(
         lang === 'ar'
@@ -53,13 +55,30 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     try {
       await onLoginSubmit(identifier.trim(), password);
     } catch (err) {
+      const apiErr = err as Error & {
+        status?: number;
+        rawText?: string;
+        url?: string;
+      };
       const msg =
-        err instanceof Error && err.message
-          ? err.message
+        apiErr instanceof Error && apiErr.message
+          ? apiErr.message
           : lang === 'ar'
             ? 'تعذر تسجيل الدخول. تحقق من البيانات أو اتصال الشبكة.'
             : 'Unable to sign in. Check credentials or network connection.';
+      const statusLabel =
+        typeof apiErr?.status === 'number' && apiErr.status > 0
+          ? `HTTP ${apiErr.status}`
+          : 'HTTP 0 (Network)';
+      const rawSource =
+        typeof apiErr?.rawText === 'string' && apiErr.rawText.trim()
+          ? apiErr.rawText
+          : apiErr instanceof Error && apiErr.message
+            ? apiErr.message
+            : String(err || 'Empty response');
+      const snippet = rawSource.replace(/\s+/g, ' ').trim().slice(0, 150);
       setErrorMsg(msg);
+      setErrorDetail(`${statusLabel} — ${snippet}`);
     } finally {
       setLoading(false);
     }
@@ -125,9 +144,19 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
           {/* Error Feedback */}
           {errorMsg && (
-            <div className="w-full mb-4 px-4 py-3 rounded-2xl bg-error-container/30 border border-error/40 text-error text-xs font-semibold flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{errorMsg}</span>
+            <div className="w-full mb-4 px-4 py-3 rounded-2xl bg-error-container/30 border border-error/40 text-error text-xs font-semibold flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="flex flex-col gap-1 min-w-0 flex-1">
+                <span>{errorMsg}</span>
+                {errorDetail && (
+                  <code
+                    dir="ltr"
+                    className="block text-[11px] font-mono font-normal text-error/90 bg-black/20 rounded-lg px-2 py-1.5 break-all text-left select-all"
+                  >
+                    {errorDetail}
+                  </code>
+                )}
+              </div>
             </div>
           )}
 

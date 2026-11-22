@@ -298,11 +298,15 @@ export default function App() {
     const raw = await webstackApi.login(identifier, password);
     const { token, courier: profile } = extractAuthPayload(raw);
     if (!token) {
-      throw new Error(
+      const err = new Error(
         lang === 'ar'
           ? 'لم يتم استلام رمز المصادقة من الخادم'
           : 'Authentication token not returned by server'
-      );
+      ) as Error & { status?: number; rawText?: string; url?: string };
+      err.status = raw?.__httpStatus ?? 200;
+      err.rawText = raw?.__rawText ?? (raw ? JSON.stringify(raw) : '');
+      err.url = raw?.__url ?? '/api/v1/auth/login.php';
+      throw err;
     }
     saveAuthSession(token, profile, false);
     setCourier(profile);
