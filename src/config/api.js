@@ -265,6 +265,17 @@ export const webstackApi = {
       },
     }),
 
+  finalizePickup: (payload) =>
+    apiRequest('/courier/pickup_receive.php', {
+      method: 'POST',
+      body: {
+        action: 'finalize_pickup',
+        cancel_unreceived: Boolean(payload?.cancel_unreceived),
+        received_via: payload?.received_via || 'manual',
+        ...payload,
+      },
+    }),
+
   getCustody: () =>
     apiRequest('/courier/custody.php', {
       method: 'GET',

@@ -956,54 +956,71 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
               )}
             </div>
 
-            {/* Action Buttons: Google Maps / In-App Nav, Details/Receive Batch, Call */}
-            <div className="flex items-center gap-2 pt-0.5">
-              {selectedEntry.shipment.category === 'pickup' ? (
-                <a
-                  href={buildGoogleMapsUrl(
-                    selectedEntry.shipment.lat,
-                    selectedEntry.shipment.lng,
-                    selectedEntry.shipment.address
-                  )}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 min-h-[48px] px-3 rounded-xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(16,185,129,0.3)] active:scale-[0.98] transition"
+            {/* Action Buttons: Responsive layout preventing clipping on mobile screens */}
+            {selectedEntry.shipment.category === 'pickup' ? (
+              <div className="flex flex-col gap-2 pt-0.5 w-full">
+                <div className="flex items-center gap-2 w-full">
+                  <a
+                    href={buildGoogleMapsUrl(
+                      selectedEntry.shipment.lat,
+                      selectedEntry.shipment.lng,
+                      selectedEntry.shipment.address
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 min-w-0 min-h-[44px] px-3 rounded-xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(16,185,129,0.3)] active:scale-[0.98] transition"
+                  >
+                    <ExternalLink className="w-4 h-4 shrink-0" />
+                    <span className="truncate">{t(lang, 'navigateGoogleMaps')}</span>
+                  </a>
+
+                  <a
+                    href={`tel:${selectedEntry.shipment.customerPhone}`}
+                    aria-label={t(lang, 'call')}
+                    className="w-11 h-[44px] rounded-xl bg-surface-container-low hover:bg-surface-bright border border-outline-variant/35 text-primary flex items-center justify-center active:scale-95 transition shrink-0"
+                  >
+                    <Phone className="w-4 h-4" />
+                  </a>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => onOpenShipmentDetails(selectedEntry.shipment)}
+                  className="w-full min-h-[44px] px-3 rounded-xl bg-surface-container-low hover:bg-surface-bright border border-outline-variant/35 text-on-surface text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition cursor-pointer"
                 >
-                  <ExternalLink className="w-4 h-4 shrink-0" />
-                  <span className="truncate">{t(lang, 'navigateGoogleMaps')}</span>
-                </a>
-              ) : (
+                  <Package className="w-4 h-4 text-secondary shrink-0" />
+                  <span className="truncate">{t(lang, 'reviewAndReceiveBatch')}</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 pt-0.5 w-full">
                 <button
                   type="button"
                   onClick={handleStartNavigation}
-                  className="flex-1 min-h-[48px] px-3 rounded-xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-sm font-bold flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(16,185,129,0.3)] active:scale-[0.98] transition cursor-pointer"
+                  className="flex-1 min-w-0 min-h-[46px] px-3 rounded-xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(16,185,129,0.3)] active:scale-[0.98] transition cursor-pointer"
                 >
                   <Navigation className="w-4 h-4 shrink-0" />
                   <span className="truncate">{t(lang, 'startNavigation')}</span>
                 </button>
-              )}
 
-              <button
-                type="button"
-                onClick={() => onOpenShipmentDetails(selectedEntry.shipment)}
-                className="min-h-[48px] px-3.5 rounded-xl bg-surface-container-low hover:bg-surface-bright border border-outline-variant/35 text-on-surface text-xs font-bold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer shrink-0"
-              >
-                <Package className="w-4 h-4 text-on-surface-variant shrink-0" />
-                <span>
-                  {selectedEntry.shipment.category === 'pickup'
-                    ? t(lang, 'reviewAndReceiveBatch')
-                    : t(lang, 'shipmentDetailsBtn')}
-                </span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenShipmentDetails(selectedEntry.shipment)}
+                  className="min-h-[46px] px-3 rounded-xl bg-surface-container-low hover:bg-surface-bright border border-outline-variant/35 text-on-surface text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 active:scale-95 transition cursor-pointer shrink-0"
+                >
+                  <Package className="w-4 h-4 text-on-surface-variant shrink-0" />
+                  <span className="whitespace-nowrap">{t(lang, 'shipmentDetailsBtn')}</span>
+                </button>
 
-              <a
-                href={`tel:${selectedEntry.shipment.customerPhone}`}
-                aria-label={t(lang, 'call')}
-                className="w-12 h-12 rounded-xl bg-surface-container-low hover:bg-surface-bright border border-outline-variant/35 text-primary flex items-center justify-center active:scale-95 transition shrink-0"
-              >
-                <Phone className="w-5 h-5" />
-              </a>
-            </div>
+                <a
+                  href={`tel:${selectedEntry.shipment.customerPhone}`}
+                  aria-label={t(lang, 'call')}
+                  className="w-11 h-[46px] rounded-xl bg-surface-container-low hover:bg-surface-bright border border-outline-variant/35 text-primary flex items-center justify-center active:scale-95 transition shrink-0"
+                >
+                  <Phone className="w-4 h-4" />
+                </a>
+              </div>
+            )}
           </div>
         )}
       </div>

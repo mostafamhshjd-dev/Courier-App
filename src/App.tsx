@@ -577,48 +577,61 @@ export default function App() {
     }
   };
 
-  // Confirm Pickup Order / Batch -> POST /courier/update_status.php (status_id = 5, received_via = 'qr' | 'manual')
+  // Finalize Pickup Order / Batch -> POST /api/v1/courier/pickup_receive.php
+  // Supports full receive or partial receive with permanent cancellation of unreceived shipments
   const handleConfirmPickup = async ({
     task,
     receivedVia,
     waybills,
+    unreceivedWaybills,
+    cancelUnreceived,
   }: PickupConfirmActionPayload) => {
     setConfirmingPickupId(task.id);
     const confirmedTrackingNumbers = waybills.map((w) => w.trackingNumber);
     const confirmedIds = waybills.map((w) => w.id);
+    const unreceivedIds = unreceivedWaybills.map((w) => w.id);
+    const resolvedBatchId = task.batchId ?? task.id.replace(/^batch-/, '');
 
     try {
-      await webstackApi.confirmPickup({
+      await webstackApi.finalizePickup({
+        action: 'finalize_pickup',
+        cancel_unreceived: cancelUnreceived,
+        batch_id: resolvedBatchId,
+        pickup_batch_id: resolvedBatchId,
         shipment_id: task.isPickupBatch ? undefined : task.id,
-        id: task.isPickupBatch ? task.batchId ?? task.id : task.id,
-        batch_id: task.batchId,
-        pickup_batch_id: task.batchId,
+        id: task.isPickupBatch ? resolvedBatchId : task.id,
         tracking_number: task.trackingNumber,
-        tracking_numbers: confirmedTrackingNumbers,
+        received_shipment_ids: confirmedIds,
+        received_tracking_numbers: confirmedTrackingNumbers,
+        unreceived_shipment_ids: unreceivedIds,
         shipment_ids: confirmedIds,
+        tracking_numbers: confirmedTrackingNumbers,
         received_count: waybills.length,
+        cancelled_count: unreceivedWaybills.length,
         received_via: receivedVia,
         is_batch: task.isPickupBatch ? 1 : 0,
       });
 
       const applyConfirmed = (item: ShipmentTask): ShipmentTask => {
         if (item.id !== task.id) return item;
-        const nextWaybills = (item.batchShipments || waybills).map((w) =>
-          confirmedTrackingNumbers.includes(w.trackingNumber)
-            ? {
-                ...w,
-                status: 'picked_up',
-                statusId: 5,
-                received: true,
-                receivedVia,
-              }
-            : w
-        );
+        // Retain ONLY received waybills (cancelled/unreceived shipments are removed)
+        const nextWaybills = (item.batchShipments || waybills)
+          .filter((w) => confirmedTrackingNumbers.includes(w.trackingNumber))
+          .map((w) => ({
+            ...w,
+            status: 'picked_up',
+            statusId: 5,
+            received: true,
+            receivedVia,
+          }));
+
         return {
           ...item,
           status: 'picked_up',
           statusId: 5,
           receivedVia,
+          shipmentsCount: nextWaybills.length || waybills.length,
+          itemsCount: nextWaybills.length || waybills.length,
           statusLabel:
             lang === 'ar'
               ? 'بيك أب في عهدتي — مطلوب تسليمها للمخزن'
@@ -631,7 +644,15 @@ export default function App() {
       setSelectedShipment((prev) => (prev && prev.id === task.id ? applyConfirmed(prev) : prev));
 
       if (soundEnabled) playFeedbackChime();
-      notify(t(lang, 'pickupConfirmedToast'), 'success');
+      notify(
+        cancelUnreceived && unreceivedWaybills.length > 0
+          ? t(lang, 'partialPickupConfirmedToast', {
+              received: waybills.length,
+              cancelled: unreceivedWaybills.length,
+            })
+          : t(lang, 'pickupConfirmedToast'),
+        'success'
+      );
       loadTasks({ silent: true });
       loadCustody({ silent: true });
     } catch (err) {

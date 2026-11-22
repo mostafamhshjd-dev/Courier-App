@@ -8,6 +8,7 @@ import {
   Loader2,
   PackageCheck,
   QrCode,
+  RefreshCw,
   X,
 } from 'lucide-react';
 import { Language, PickupWaybillItem } from '../types/courier';
@@ -43,6 +44,7 @@ export const QrBarcodeScannerModal: React.FC<QrBarcodeScannerModalProps> = ({
 
   const [cameraState, setCameraState] = useState<'starting' | 'active' | 'error'>('starting');
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [retryCounter, setRetryCounter] = useState(0);
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'info' | 'error';
     text: string;
@@ -95,6 +97,13 @@ export const QrBarcodeScannerModal: React.FC<QrBarcodeScannerModalProps> = ({
     }
 
     onScanMatchRef.current(matched.trackingNumber);
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(60);
+      }
+    } catch {
+      // Ignore vibration restrictions
+    }
     setFeedback({
       type: 'success',
       text: t(lang, 'scannerMatchedToast', { code: matched.trackingNumber }),
@@ -112,26 +121,71 @@ export const QrBarcodeScannerModal: React.FC<QrBarcodeScannerModalProps> = ({
     const startCamera = async () => {
       try {
         // Wait a tick for DOM container to mount cleanly
-        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        await new Promise((resolve) => window.setTimeout(resolve, 140));
         if (cancelled) return;
+
+        // Explicitly request rear camera permission first so Android WebView triggers
+        // onPermissionRequest (RESOURCE_VIDEO_CAPTURE) and Runtime CAMERA permission cleanly.
+        if (
+          typeof navigator !== 'undefined' &&
+          navigator.mediaDevices &&
+          typeof navigator.mediaDevices.getUserMedia === 'function'
+        ) {
+          let preflightStream: MediaStream | null = null;
+          try {
+            preflightStream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: 'environment' } },
+              audio: false,
+            });
+          } finally {
+            if (preflightStream) {
+              preflightStream.getTracks().forEach((track) => track.stop());
+            }
+          }
+          if (cancelled) return;
+        }
 
         const scanner = new Html5Qrcode(readerElementId, { verbose: false });
         scannerRef.current = scanner;
 
-        await scanner.start(
-          { facingMode: 'environment' },
-          {
-            fps: 10,
-            qrbox: { width: 250, height: 170 },
-            aspectRatio: 1.333,
-          },
-          (decodedText) => {
-            processScannedCode(decodedText);
-          },
-          () => {
-            // Ignore per-frame decode misses
+        const scanConfig = {
+          fps: 10,
+          qrbox: { width: 250, height: 170 },
+          aspectRatio: 1.333,
+        };
+
+        try {
+          await scanner.start(
+            { facingMode: 'environment' },
+            scanConfig,
+            (decodedText) => {
+              processScannedCode(decodedText);
+            },
+            () => {
+              // Ignore per-frame decode misses
+            }
+          );
+        } catch {
+          // Fallback: enumerate cameras and select rear/environment or first camera
+          const cameras = await Html5Qrcode.getCameras();
+          if (!cameras || cameras.length === 0) {
+            throw new Error('NO_CAMERA_FOUND');
           }
-        );
+          const rearCamera =
+            cameras.find((cam) => /back|rear|environment/i.test(cam.label || '')) ||
+            cameras[cameras.length - 1] ||
+            cameras[0];
+          await scanner.start(
+            rearCamera.id,
+            scanConfig,
+            (decodedText) => {
+              processScannedCode(decodedText);
+            },
+            () => {
+              // Ignore per-frame decode misses
+            }
+          );
+        }
 
         if (!cancelled) {
           setCameraState('active');
@@ -141,7 +195,7 @@ export const QrBarcodeScannerModal: React.FC<QrBarcodeScannerModalProps> = ({
           setCameraState('error');
           setCameraError(
             lang === 'ar'
-              ? 'تعذر فتح الكاميرا. تأكد من منح إذن الكاميرا أو استخدم الإدخال اليدوي بالأسفل.'
+              ? 'تعذر فتح الكاميرا. تأكد من السماح بإذن الكاميرا للتطبيق أو استخدم الإدخال اليدوي بالأسفل.'
               : err instanceof Error
                 ? err.message
                 : 'Could not start camera. Allow camera permission or enter code manually below.'
@@ -170,7 +224,7 @@ export const QrBarcodeScannerModal: React.FC<QrBarcodeScannerModalProps> = ({
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, readerElementId, lang]);
+  }, [open, readerElementId, lang, retryCounter]);
 
   if (!open) return null;
 
@@ -183,6 +237,9 @@ export const QrBarcodeScannerModal: React.FC<QrBarcodeScannerModalProps> = ({
 
   const scannedCount = scannedTrackingNumbers.length;
   const totalCount = waybills.length;
+  const remainingCount = Math.max(0, totalCount - scannedCount);
+  const isPartial = scannedCount > 0 && remainingCount > 0;
+  const isComplete = scannedCount > 0 && remainingCount === 0;
 
   return (
     <div
@@ -236,9 +293,17 @@ export const QrBarcodeScannerModal: React.FC<QrBarcodeScannerModalProps> = ({
           )}
 
           {cameraState === 'error' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-5 text-center bg-surface-container-lowest/95">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-5 text-center bg-surface-container-lowest/95">
               <Camera className="w-8 h-8 text-secondary" />
               <p className="text-xs text-on-surface-variant leading-relaxed">{cameraError}</p>
+              <button
+                type="button"
+                onClick={() => setRetryCounter((c) => c + 1)}
+                className="inline-flex items-center gap-1.5 px-4 min-h-[40px] rounded-xl bg-primary/15 border border-primary/35 text-primary text-xs font-bold active:scale-95 transition cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>{t(lang, 'retryCameraBtn')}</span>
+              </button>
             </div>
           )}
         </div>
@@ -259,7 +324,7 @@ export const QrBarcodeScannerModal: React.FC<QrBarcodeScannerModalProps> = ({
             ) : (
               <AlertCircle className="w-4 h-4 shrink-0" />
             )}
-            <span>{feedback.text}</span>
+            <span className="min-w-0 break-words">{feedback.text}</span>
           </div>
         )}
 
@@ -276,7 +341,7 @@ export const QrBarcodeScannerModal: React.FC<QrBarcodeScannerModalProps> = ({
               value={manualCode}
               onChange={(e) => setManualCode(e.target.value)}
               placeholder={t(lang, 'scannerManualPlaceholder')}
-              className="flex-1 min-h-[44px] px-3.5 rounded-xl bg-surface-container-low border border-outline-variant/35 text-sm font-telemetry font-semibold text-on-surface focus:outline-none focus:border-primary"
+              className="flex-1 min-w-0 min-h-[44px] px-3.5 rounded-xl bg-surface-container-low border border-outline-variant/35 text-sm font-telemetry font-semibold text-on-surface focus:outline-none focus:border-primary"
             />
             <button
               type="submit"
@@ -293,17 +358,30 @@ export const QrBarcodeScannerModal: React.FC<QrBarcodeScannerModalProps> = ({
             type="button"
             disabled={scannedCount === 0 || submitting}
             onClick={onConfirmScanned}
-            className="w-full min-h-[52px] px-4 rounded-2xl bg-primary hover:bg-primary-fixed text-on-primary font-display text-sm font-bold flex items-center justify-center gap-2 shadow-md active:scale-[0.98] transition disabled:opacity-50 cursor-pointer"
+            className={`w-full min-h-[52px] px-4 py-2.5 rounded-2xl font-display text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-md active:scale-[0.98] transition disabled:opacity-50 cursor-pointer text-center leading-snug ${
+              isPartial
+                ? 'bg-secondary hover:bg-secondary-fixed text-on-secondary'
+                : 'bg-primary hover:bg-primary-fixed text-on-primary'
+            }`}
           >
             {submitting ? (
               <>
-                <Loader2 className="w-5 h-5 animate-spin" />
+                <Loader2 className="w-5 h-5 animate-spin shrink-0" />
                 <span>{t(lang, 'confirmingPickup')}</span>
               </>
             ) : (
               <>
-                <PackageCheck className="w-5 h-5" />
-                <span>{t(lang, 'scannerConfirmScannedBtn', { count: scannedCount })}</span>
+                <PackageCheck className="w-5 h-5 shrink-0" />
+                <span>
+                  {isPartial
+                    ? t(lang, 'confirmPartialPickupBtn', {
+                        received: scannedCount,
+                        cancelled: remainingCount,
+                      })
+                    : isComplete
+                      ? t(lang, 'confirmAllPickupBtn', { count: scannedCount })
+                      : t(lang, 'scannerConfirmScannedBtn', { count: scannedCount })}
+                </span>
               </>
             )}
           </button>

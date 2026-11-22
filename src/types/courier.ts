@@ -31,6 +31,7 @@ export interface PickupWaybillItem {
   id: string;
   trackingNumber: string;
   pieces: number;
+  recipientName?: string;
   itemsSummary: string;
   notes?: string;
   statusId?: number | null;

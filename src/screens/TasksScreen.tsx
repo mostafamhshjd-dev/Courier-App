@@ -354,7 +354,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
             return (
               <article
                 key={item.id}
-                className={`bg-surface-container-low border rounded-2xl p-4 shadow-sm flex flex-col gap-3 transition-colors ${
+                className={`bg-surface-container-low border rounded-2xl p-4 shadow-sm flex flex-col gap-3 transition-colors overflow-hidden ${
                   isPickup && !pickedUp
                     ? 'border-secondary/40 hover:border-secondary/70'
                     : 'border-outline-variant/25 hover:border-primary/40'
@@ -371,13 +371,13 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                       onSelectShipment(item);
                     }
                   }}
-                  className="space-y-2.5 cursor-pointer focus:outline-none"
+                  className="space-y-2.5 cursor-pointer focus:outline-none min-w-0"
                 >
                   {/* Waybill / Batch Code + Status + Haversine Distance */}
                   <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2 flex-wrap text-xs">
+                    <div className="flex items-center gap-2 flex-wrap text-xs min-w-0">
                       <span
-                        className="font-telemetry text-xs font-bold bg-surface-container-highest text-on-surface px-2.5 py-1 rounded-lg tabular-nums"
+                        className="font-telemetry text-xs font-bold bg-surface-container-highest text-on-surface px-2.5 py-1 rounded-lg tabular-nums shrink-0"
                         dir="ltr"
                       >
                         #{item.batchCode || item.trackingNumber}
@@ -387,7 +387,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                         <>
                           {item.isPickupBatch && (
                             <span className="text-[11px] font-bold text-secondary inline-flex items-center gap-1">
-                              <Package className="w-3.5 h-3.5" />
+                              <Package className="w-3.5 h-3.5 shrink-0" />
                               {t(lang, 'pickupBatchLabel')}
                             </span>
                           )}
@@ -397,9 +397,9 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                             }`}
                           >
                             {pickedUp ? (
-                              <PackageCheck className="w-3.5 h-3.5" />
+                              <PackageCheck className="w-3.5 h-3.5 shrink-0" />
                             ) : (
-                              <Clock className="w-3.5 h-3.5" />
+                              <Clock className="w-3.5 h-3.5 shrink-0" />
                             )}
                             <span>
                               {pickedUp
@@ -435,7 +435,7 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                     </div>
 
                     {distKm !== null && (
-                      <span className="text-xs font-bold text-primary inline-flex items-center gap-1 tabular-nums">
+                      <span className="text-xs font-bold text-primary inline-flex items-center gap-1 tabular-nums shrink-0">
                         <MapPin className="w-3.5 h-3.5" />
                         <span>{formatDistance(distKm, lang)}</span>
                       </span>
@@ -443,15 +443,17 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                   </div>
 
                   {/* Merchant / Customer Name & Phone & Address */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2 min-w-0">
+                  <div className="space-y-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 min-w-0">
+                      <h3 className="font-display text-base font-bold text-on-surface flex items-center gap-2 min-w-0 flex-1">
                         {isPickup ? (
                           <Store className="w-4 h-4 text-secondary shrink-0" />
                         ) : (
                           <User className="w-4 h-4 text-primary shrink-0" />
                         )}
-                        <span className="truncate">{item.customerName}</span>
+                        <span className="truncate">
+                          {isPickup ? item.merchantName || item.customerName : item.customerName}
+                        </span>
                       </h3>
                       {isPickup && item.customerPhone && (
                         <span
@@ -463,56 +465,65 @@ export const TasksScreen: React.FC<TasksScreenProps> = ({
                       )}
                     </div>
                     {item.address && (
-                      <p className="text-xs sm:text-sm text-on-surface-variant flex items-start gap-1.5 leading-relaxed">
+                      <p className="text-xs sm:text-sm text-on-surface-variant flex items-start gap-1.5 leading-relaxed min-w-0">
                         <MapPin className="w-4 h-4 text-outline shrink-0 mt-0.5" />
-                        <span>{item.address}</span>
+                        <span className="break-words min-w-0">{item.address}</span>
                       </p>
                     )}
                   </div>
 
                   {/* Pickup Expected Count & Waybill Preview OR COD / Prepaid Strip */}
                   {isPickup ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-surface-container border border-outline-variant/20">
-                        <div className="flex items-center gap-2 text-secondary text-xs font-bold">
+                    <div className="space-y-2 min-w-0">
+                      <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-surface-container border border-outline-variant/20 min-w-0">
+                        <div className="flex items-center gap-2 text-secondary text-xs font-bold min-w-0">
                           <Package className="w-4 h-4 shrink-0" />
-                          <span className="tabular-nums">
+                          <span className="tabular-nums truncate">
                             {t(lang, 'expectedShipmentsLabel')}: {pickupCount}
                           </span>
                         </div>
-                        <span className="text-[11px] font-semibold text-primary whitespace-nowrap">
+                        <span className="text-[11px] font-semibold text-primary whitespace-nowrap shrink-0">
                           {t(lang, 'reviewAndReceiveBatch')}
                         </span>
                       </div>
 
                       {waybills.length > 0 && (
-                        <div className="rounded-xl bg-surface-container-lowest/70 border border-outline-variant/20 divide-y divide-outline-variant/15">
-                          {waybills.slice(0, 3).map((w) => (
-                            <div
-                              key={w.id + '-' + w.trackingNumber}
-                              className="px-3 py-2 flex items-center justify-between gap-2 text-[11px]"
-                            >
-                              <div className="min-w-0 flex-1">
-                                <span
-                                  dir="ltr"
-                                  className="font-telemetry font-bold text-on-surface tabular-nums"
-                                >
-                                  #{w.trackingNumber}
-                                </span>
-                                <span className="text-on-surface-variant mx-1.5">·</span>
-                                <span className="text-on-surface-variant truncate">
-                                  {w.notes || w.itemsSummary}
+                        <div className="rounded-xl bg-surface-container-lowest/70 border border-outline-variant/20 divide-y divide-outline-variant/15 overflow-hidden">
+                          {waybills.slice(0, 3).map((w) => {
+                            const secondaryLabel = w.recipientName || w.itemsSummary || w.notes || '';
+                            return (
+                              <div
+                                key={w.id + '-' + w.trackingNumber}
+                                className="px-3 py-2 flex items-center justify-between gap-2 text-[11px] min-w-0 overflow-hidden"
+                              >
+                                <div className="flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden">
+                                  <span
+                                    dir="ltr"
+                                    className="font-telemetry font-bold text-on-surface tabular-nums shrink-0"
+                                  >
+                                    #{w.trackingNumber}
+                                  </span>
+                                  {secondaryLabel && (
+                                    <>
+                                      <span className="text-on-surface-variant shrink-0">·</span>
+                                      <span className="text-on-surface-variant truncate min-w-0 flex-1">
+                                        {secondaryLabel}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                                <span className="text-secondary font-bold shrink-0 whitespace-nowrap tabular-nums">
+                                  {w.pieces} {t(lang, 'pieceUnit')}
                                 </span>
                               </div>
-                              <span className="text-secondary font-bold shrink-0 tabular-nums">
-                                {w.pieces} {t(lang, 'pieceUnit')}
-                              </span>
-                            </div>
-                          ))}
+                            );
+                          })}
                           {waybills.length > 3 && (
-                            <div className="px-3 py-1.5 text-[11px] font-bold text-primary text-center">
+                            <div className="px-3 py-1.5 text-[11px] font-bold text-primary text-center truncate">
                               +{waybills.length - 3}{' '}
-                              {lang === 'ar' ? 'بوالص أخرى — اضغط للمراجعة الكاملة' : 'more waybills — tap to review'}
+                              {lang === 'ar'
+                                ? 'بوالص أخرى — اضغط للمراجعة الكاملة'
+                                : 'more waybills — tap to review'}
                             </div>
                           )}
                         </div>

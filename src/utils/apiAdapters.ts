@@ -58,6 +58,31 @@ export function extractBranchName(...sources: Array<AnyRecord | null | undefined
   return '';
 }
 
+export function extractMerchantName(...sources: Array<AnyRecord | null | undefined>): string {
+  for (const src of sources) {
+    if (!src || typeof src !== 'object') continue;
+    const merchantObj = src.merchant && typeof src.merchant === 'object' ? src.merchant : null;
+    const senderObj = src.sender && typeof src.sender === 'object' ? src.sender : null;
+    const found = pickNonEmptyString(
+      merchantObj?.company_name,
+      src.company_name,
+      src.merchant_company_name,
+      merchantObj?.business_name,
+      merchantObj?.store_name,
+      merchantObj?.name,
+      senderObj?.company_name,
+      senderObj?.name,
+      src.merchant_name,
+      src.sender_name,
+      src.store_name,
+      src.business_name,
+      src.client_name
+    );
+    if (found) return found;
+  }
+  return '';
+}
+
 export function extractAuthPayload(raw: AnyRecord): {
   token: string;
   courier: CourierProfile;
@@ -205,30 +230,19 @@ export function normalizeShipment(
   );
   const batchIdRaw = item.pickup_batch_id ?? item.batch_id ?? (isPickupBatch ? item.id : undefined);
 
-  const merchantName = String(
-    item.merchant_name ??
-      item.sender_name ??
-      item.store_name ??
-      item.client_name ??
-      'WebStack Merchant'
-  );
+  const merchantName =
+    extractMerchantName(item) ||
+    pickNonEmptyString(item.customer_name) ||
+    'تاجر';
 
   const customerName = isPickup
-    ? String(
-        item.merchant_name ??
-          item.sender_name ??
-          item.store_name ??
-          item.customer_name ??
-          item.client_name ??
-          'تاجر'
-      )
-    : String(
-        item.customer_name ??
-          item.receiver_name ??
-          item.recipient_name ??
-          item.client_name ??
-          'عميل'
-      );
+    ? merchantName
+    : pickNonEmptyString(
+        item.customer_name,
+        item.receiver_name,
+        item.recipient_name,
+        item.client_name
+      ) || 'عميل';
 
   const customerPhone = isPickup
     ? String(
@@ -317,10 +331,17 @@ export function normalizeShipment(
           const wTracking = String(
             w.tracking_number ?? w.waybill ?? w.awb ?? w.code ?? `WS-${w.id ?? idx + 1}`
           ).replace(/^#/, '');
+          const wRecipient = pickNonEmptyString(
+            w.recipient_name,
+            w.receiver_name,
+            w.customer_name,
+            w.consignee_name
+          );
           return {
             id: String(w.id ?? w.shipment_id ?? wTracking),
             trackingNumber: wTracking,
             pieces: Math.max(1, toNumber(w.pieces ?? w.items_count ?? w.quantity, 1)),
+            recipientName: wRecipient || undefined,
             itemsSummary: String(
               w.items_summary ??
                 w.description ??
@@ -345,6 +366,12 @@ export function normalizeShipment(
               id: String(item.id ?? item.shipment_id ?? tracking),
               trackingNumber: tracking,
               pieces: Math.max(1, toNumber(item.items_count ?? item.pieces ?? item.quantity, 1)),
+              recipientName:
+                pickNonEmptyString(
+                  item.recipient_name,
+                  item.receiver_name,
+                  item.consignee_name
+                ) || undefined,
               itemsSummary: String(
                 item.items_summary ??
                   item.description ??
@@ -622,6 +649,7 @@ export function normalizeTasksResponse(raw: AnyRecord): {
           id: tItem.id,
           trackingNumber: tItem.trackingNumber,
           pieces: tItem.itemsCount || 1,
+          recipientName: tItem.batchShipments?.[0]?.recipientName,
           itemsSummary: tItem.itemsSummary,
           notes: tItem.notes,
           statusId: tItem.statusId,
