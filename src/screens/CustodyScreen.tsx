@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  Banknote,
   Barcode,
   Clock,
   Package,
@@ -9,6 +10,7 @@ import {
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
+  Store,
   Wallet,
 } from 'lucide-react';
 import { CustodyParcel, CustodySummary, Language } from '../types/courier';
@@ -146,6 +148,80 @@ export const CustodyScreen: React.FC<CustodyScreenProps> = ({
           </div>
         </div>
       </section>
+
+      {/* 1B. Separate Merchant Payout Custody Section (Only visible when merchant_payout_custody_total > 0) */}
+      {custody.merchantPayoutCustodyTotal > 0 && (
+        <section className="relative overflow-hidden rounded-3xl bg-surface-container-high border border-secondary/45 p-5 shadow-md space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-10 h-10 rounded-full bg-secondary/15 flex items-center justify-center text-secondary shrink-0">
+                <Banknote className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="font-display text-base sm:text-lg font-bold text-on-surface truncate">
+                  {t(lang, 'merchantPayoutCustodyTitle')}
+                </h2>
+                <p className="text-xs text-on-surface-variant leading-snug mt-0.5">
+                  {t(lang, 'merchantPayoutCustodyDesc')}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-baseline gap-2 py-1 px-4 rounded-2xl bg-secondary/12 border border-secondary/35 flex-wrap">
+            <span className="font-telemetry text-3xl sm:text-4xl font-extrabold text-secondary tracking-tight tabular-nums">
+              {custody.merchantPayoutCustodyTotal.toLocaleString('en-US')}
+            </span>
+            <span className="font-display text-sm sm:text-base font-bold text-secondary/90">
+              {t(lang, 'currencyFull')}
+            </span>
+          </div>
+
+          {custody.merchantPayoutBatches.length > 0 && (
+            <div className="space-y-2">
+              {custody.merchantPayoutBatches.map((payout) => (
+                <div
+                  key={payout.id}
+                  className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-surface-container-lowest/85 border border-outline-variant/25"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <div className="w-8 h-8 rounded-xl bg-secondary/15 text-secondary flex items-center justify-center shrink-0">
+                      <Store className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-display text-sm font-bold text-on-surface truncate">
+                        {payout.merchantName}
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[11px] text-on-surface-variant">
+                        <span className="font-telemetry tabular-nums" dir="ltr">
+                          #{payout.batchCode}
+                        </span>
+                        {payout.shipmentsCount > 0 && (
+                          <>
+                            <span>·</span>
+                            <span className="tabular-nums">
+                              {payout.shipmentsCount} {t(lang, 'shipmentUnit')}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-end shrink-0">
+                    <span className="text-[10px] font-semibold text-on-surface-variant">
+                      {t(lang, 'dueToMerchantAmount')}
+                    </span>
+                    <span className="font-telemetry text-sm font-extrabold text-secondary tabular-nums">
+                      {payout.amount.toLocaleString('en-US')} {t(lang, 'currency')}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* 2. Pending Warehouse Parcels (Returns & Postponed) */}
       <section className="space-y-3">

@@ -15,6 +15,7 @@ import {
   CustodySummary,
   GeoPoint,
   Language,
+  MerchantReturnBatch,
   ShipmentTask,
   ThemeMode,
 } from './types/courier';
@@ -105,8 +106,11 @@ export default function App() {
   });
 
   const [tasks, setTasks] = useState<ShipmentTask[]>([]);
+  const [merchantReturnBatches, setMerchantReturnBatches] = useState<MerchantReturnBatch[]>([]);
   const [custody, setCustody] = useState<CustodySummary>({
     totalCodCash: 0,
+    merchantPayoutCustodyTotal: 0,
+    merchantPayoutBatches: [],
     shiftLabelAr: 'الوردية الحالية',
     shiftLabelEn: 'Current Shift',
     successfulOrders: 0,
@@ -128,6 +132,7 @@ export default function App() {
   const [outcomeTarget, setOutcomeTarget] = useState<ShipmentTask | null>(null);
   const [outcomeSubmitting, setOutcomeSubmitting] = useState(false);
   const [confirmingPickupId, setConfirmingPickupId] = useState<string | null>(null);
+  const [deliveringMerchantBatchId, setDeliveringMerchantBatchId] = useState<string | null>(null);
   const [focusedMapTaskId, setFocusedMapTaskId] = useState<string | null>(null);
 
   const [courierLocation, setCourierLocation] = useState<GeoPoint>(DEFAULT_CAIRO_COORDS);
@@ -219,11 +224,15 @@ export default function App() {
           (item) =>
             item.category === 'pickup' || (item.status !== 'delivered' && item.statusId !== 8)
         );
+        const allIncomingIds = [
+          ...incomingActive.map((i) => i.id),
+          ...parsed.merchantReturnBatches.map((b) => b.id),
+        ];
 
         if (tasksBaselineReadyRef.current) {
           let newCount = 0;
-          incomingActive.forEach((item) => {
-            if (!knownTaskIdsRef.current.has(item.id)) {
+          allIncomingIds.forEach((taskId) => {
+            if (!knownTaskIdsRef.current.has(taskId)) {
               newCount += 1;
             }
           });
@@ -249,8 +258,12 @@ export default function App() {
           tasksBaselineReadyRef.current = true;
         }
 
-        knownTaskIdsRef.current = new Set(parsed.tasks.map((item) => item.id));
+        knownTaskIdsRef.current = new Set([
+          ...parsed.tasks.map((item) => item.id),
+          ...parsed.merchantReturnBatches.map((b) => b.id),
+        ]);
         setTasks(parsed.tasks);
+        setMerchantReturnBatches(parsed.merchantReturnBatches);
 
         // Keep currently viewed shipment/pickup batch in sync with latest server data
         setSelectedShipment((prev) => {
@@ -668,6 +681,64 @@ export default function App() {
     }
   };
 
+  const handleDeliverMerchantReturnBatch = async (
+    batch: MerchantReturnBatch,
+    recipientName?: string
+  ) => {
+    setDeliveringMerchantBatchId(batch.id);
+    try {
+      await webstackApi.deliverMerchantReturnBatch({
+        action: 'deliver_return_batch',
+        batch_id: batch.batchId,
+        return_batch_id: batch.batchId,
+        id: batch.batchId,
+        batch_code: batch.batchCode,
+        merchant_id: batch.merchantId,
+        received_by: recipientName || undefined,
+        recipient_name: recipientName || undefined,
+        delivered_to_name: recipientName || undefined,
+        cash_to_merchant: batch.cashToMerchant,
+        cash_handed_over: batch.cashToMerchant,
+        shipment_ids: batch.shipments.map((s) => s.id),
+        tracking_numbers: batch.shipments.map((s) => s.trackingNumber),
+      });
+
+      setMerchantReturnBatches((prev) => prev.filter((item) => item.id !== batch.id));
+
+      if (batch.cashToMerchant > 0) {
+        setCustody((prev) => {
+          const nextBatches = prev.merchantPayoutBatches.filter(
+            (p) => p.batchId !== batch.batchId && p.batchCode !== batch.batchCode
+          );
+          const nextTotal = Math.max(
+            0,
+            prev.merchantPayoutCustodyTotal - batch.cashToMerchant
+          );
+          return {
+            ...prev,
+            merchantPayoutCustodyTotal: nextBatches.length === 0 && nextTotal <= 0 ? 0 : nextTotal,
+            merchantPayoutBatches: nextBatches,
+          };
+        });
+      }
+
+      if (soundEnabled) playFeedbackChime();
+      notify(t(lang, 'merchantReturnDeliveredToast'), 'success');
+      loadTasks({ silent: true });
+      loadCustody({ silent: true });
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : lang === 'ar'
+            ? 'تعذر تأكيد تسليم دفعة المرتجع للتاجر، حاول مرة أخرى'
+            : 'Could not confirm return batch delivery, please retry';
+      notify(msg, 'error');
+    } finally {
+      setDeliveringMerchantBatchId(null);
+    }
+  };
+
   const handleOpenTaskOnMap = useCallback(
     (task: ShipmentTask) => {
       if (task.lat === null || task.lng === null) {
@@ -681,6 +752,24 @@ export default function App() {
       }
       setSelectedShipment(null);
       setFocusedMapTaskId(task.id);
+      setActiveTab('map');
+    },
+    [lang, notify]
+  );
+
+  const handleOpenMerchantReturnOnMap = useCallback(
+    (batch: MerchantReturnBatch) => {
+      if (batch.lat === null || batch.lng === null) {
+        notify(
+          lang === 'ar'
+            ? 'لا تتوفر إحداثيات موقع لهذا التاجر حالياً'
+            : 'No location coordinates available for this merchant yet',
+          'info'
+        );
+        return;
+      }
+      setSelectedShipment(null);
+      setFocusedMapTaskId(batch.id);
       setActiveTab('map');
     },
     [lang, notify]
@@ -749,9 +838,10 @@ export default function App() {
     );
   }
 
-  const pendingTaskCount = tasks.filter(
-    (item) => item.category === 'pickup' || (item.status !== 'delivered' && item.statusId !== 8)
-  ).length;
+  const pendingTaskCount =
+    tasks.filter(
+      (item) => item.category === 'pickup' || (item.status !== 'delivered' && item.statusId !== 8)
+    ).length + merchantReturnBatches.length;
 
   const headerTitle = selectedShipment
     ? selectedShipment.category === 'pickup'
@@ -805,10 +895,12 @@ export default function App() {
           <TasksScreen
             courier={courier}
             tasks={tasks}
+            merchantReturnBatches={merchantReturnBatches}
             cashCustody={effectiveCustody.totalCodCash}
             courierLocation={courierLocation}
             isOnline={isOnline}
             loading={tasksLoading}
+            deliveringMerchantBatchId={deliveringMerchantBatchId}
             lang={lang}
             onRefresh={() => {
               loadTasks();
@@ -816,10 +908,13 @@ export default function App() {
             }}
             onSelectShipment={handleOpenShipmentDetails}
             onOpenOnMap={handleOpenTaskOnMap}
+            onOpenMerchantReturnOnMap={handleOpenMerchantReturnOnMap}
+            onDeliverMerchantReturnBatch={handleDeliverMerchantReturnBatch}
           />
         ) : activeTab === 'map' ? (
           <SmartMapScreen
             tasks={tasks}
+            merchantReturnBatches={merchantReturnBatches}
             courierLocation={courierLocation}
             lang={lang}
             theme={theme}

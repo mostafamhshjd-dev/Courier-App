@@ -1,7 +1,7 @@
 export type Language = 'ar' | 'en';
 export type ThemeMode = 'dark' | 'light';
 export type ActiveTab = 'tasks' | 'map' | 'custody' | 'profile';
-export type TaskCategory = 'delivery' | 'pickup' | 'returns';
+export type TaskCategory = 'delivery' | 'pickup' | 'returns' | 'merchant_returns';
 export type DeliveryOutcome = 'delivered' | 'partial_return' | 'full_return' | 'postponed';
 
 export interface CourierProfile {
@@ -38,6 +38,50 @@ export interface PickupWaybillItem {
   status?: string;
   received?: boolean;
   receivedVia?: 'qr' | 'manual';
+}
+
+export interface MerchantReturnShipmentItem {
+  id: string;
+  trackingNumber: string;
+  pieces: number;
+  recipientName?: string;
+  itemsSummary?: string;
+  notes?: string;
+  statusId?: number | null;
+  status?: string;
+}
+
+export interface MerchantReturnBatch {
+  id: string;
+  batchId: string;
+  batchCode: string;
+  merchantId?: string;
+  merchantName: string;
+  merchantPhone: string;
+  address: string;
+  lat: number | null;
+  lng: number | null;
+  shipmentsCount: number;
+  totalPieces: number;
+  cashToMerchant: number;
+  status: string;
+  statusId?: number | null;
+  statusLabel?: string;
+  notes?: string;
+  shipments: MerchantReturnShipmentItem[];
+  updatedAt?: string;
+}
+
+export interface MerchantPayoutBatch {
+  id: string;
+  batchId: string;
+  batchCode: string;
+  merchantId?: string;
+  merchantName: string;
+  merchantPhone?: string;
+  amount: number;
+  shipmentsCount: number;
+  status?: string;
 }
 
 export interface ShipmentTask {
@@ -88,6 +132,8 @@ export interface CustodyParcel {
 
 export interface CustodySummary {
   totalCodCash: number;
+  merchantPayoutCustodyTotal: number;
+  merchantPayoutBatches: MerchantPayoutBatch[];
   shiftLabelAr: string;
   shiftLabelEn: string;
   successfulOrders: number;

@@ -2,6 +2,9 @@ import {
   CourierProfile,
   CustodyParcel,
   CustodySummary,
+  MerchantPayoutBatch,
+  MerchantReturnBatch,
+  MerchantReturnShipmentItem,
   PickupWaybillItem,
   ShipmentTask,
   TaskCategory,
@@ -530,8 +533,157 @@ function isWarehouseCleared(task: ShipmentTask): boolean {
   );
 }
 
+export function normalizeMerchantReturnBatch(batch: AnyRecord): MerchantReturnBatch | null {
+  if (!batch || typeof batch !== 'object') return null;
+
+  const rawStatus = String(batch.status ?? batch.batch_status ?? 'pending').toLowerCase();
+  const statusId = toNullableNumber(batch.status_id ?? batch.batch_status_id);
+
+  const isCompleted =
+    statusId === 8 ||
+    rawStatus === 'delivered' ||
+    rawStatus === 'delivered_to_merchant' ||
+    rawStatus === 'handed_over_to_merchant' ||
+    rawStatus === 'completed' ||
+    rawStatus === 'settled';
+
+  if (isCompleted) return null;
+
+  const rawId = String(batch.id ?? batch.batch_id ?? batch.return_batch_id ?? Date.now());
+  const batchId = String(batch.batch_id ?? batch.return_batch_id ?? batch.id ?? rawId);
+  const batchCode = String(
+    batch.batch_code ?? batch.code ?? batch.reference ?? `RB-${batchId}`
+  ).replace(/^#/, '');
+
+  const merchantObj = batch.merchant && typeof batch.merchant === 'object' ? batch.merchant : null;
+  const merchantName = extractMerchantName(batch) || 'تاجر';
+  const merchantPhone = pickNonEmptyString(
+    batch.merchant_phone,
+    merchantObj?.phone,
+    merchantObj?.mobile,
+    batch.sender_phone,
+    batch.contact_phone,
+    batch.phone
+  );
+  const address = pickNonEmptyString(
+    batch.merchant_address,
+    batch.return_address,
+    batch.pickup_address,
+    batch.address,
+    batch.full_address,
+    merchantObj?.address
+  );
+
+  const lat = toNullableNumber(
+    batch.merchant_lat ??
+      batch.pickup_lat ??
+      batch.lat ??
+      batch.latitude ??
+      merchantObj?.lat ??
+      merchantObj?.latitude ??
+      batch.coords?.lat
+  );
+  const lng = toNullableNumber(
+    batch.merchant_lng ??
+      batch.pickup_lng ??
+      batch.lng ??
+      batch.lon ??
+      batch.longitude ??
+      merchantObj?.lng ??
+      merchantObj?.longitude ??
+      batch.coords?.lng
+  );
+
+  const rawItems: AnyRecord[] = Array.isArray(batch.shipments)
+    ? batch.shipments
+    : Array.isArray(batch.return_shipments)
+      ? batch.return_shipments
+      : Array.isArray(batch.waybills)
+        ? batch.waybills
+        : Array.isArray(batch.orders)
+          ? batch.orders
+          : Array.isArray(batch.items)
+            ? batch.items
+            : [];
+
+  const shipments: MerchantReturnShipmentItem[] = rawItems.map((w, idx) => {
+    const tracking = String(
+      w.tracking_number ?? w.waybill ?? w.awb ?? w.code ?? `WS-R-${w.id ?? idx + 1}`
+    ).replace(/^#/, '');
+    const pieces = Math.max(
+      1,
+      toNumber(w.returned_pieces ?? w.pieces ?? w.items_count ?? w.quantity, 1)
+    );
+    return {
+      id: String(w.id ?? w.shipment_id ?? tracking),
+      trackingNumber: tracking,
+      pieces,
+      recipientName:
+        pickNonEmptyString(w.recipient_name, w.receiver_name, w.customer_name) || undefined,
+      itemsSummary:
+        pickNonEmptyString(w.items_summary, w.description, w.contents, w.reason, w.product_name) ||
+        undefined,
+      notes: pickNonEmptyString(w.notes, w.return_reason, w.reason) || undefined,
+      statusId: toNullableNumber(w.status_id ?? w.shipment_status_id),
+      status: w.status ? String(w.status) : undefined,
+    };
+  });
+
+  const explicitCount = toNumber(
+    batch.shipments_count ?? batch.orders_count ?? batch.returns_count ?? batch.count,
+    0
+  );
+  const shipmentsCount = Math.max(explicitCount, shipments.length, 1);
+  const piecesFromItems = shipments.reduce((acc, s) => acc + s.pieces, 0);
+  const totalPieces = Math.max(
+    toNumber(batch.total_pieces ?? batch.pieces_count ?? batch.pieces, 0),
+    piecesFromItems,
+    shipmentsCount
+  );
+
+  const cashToMerchant = Math.max(
+    0,
+    toNumber(
+      batch.cash_to_merchant ??
+        batch.payout_amount ??
+        batch.cash_amount ??
+        batch.merchant_payout ??
+        batch.cash_due,
+      0
+    )
+  );
+
+  return {
+    id: `mrb-${batchId}`,
+    batchId,
+    batchCode,
+    merchantId:
+      batch.merchant_id !== undefined && batch.merchant_id !== null
+        ? String(batch.merchant_id)
+        : merchantObj?.id !== undefined
+          ? String(merchantObj.id)
+          : undefined,
+    merchantName,
+    merchantPhone,
+    address,
+    lat,
+    lng,
+    shipmentsCount,
+    totalPieces,
+    cashToMerchant,
+    status: rawStatus,
+    statusId,
+    statusLabel:
+      pickNonEmptyString(batch.status_label, batch.status_name_ar, batch.status_ar) || undefined,
+    notes: pickNonEmptyString(batch.notes, batch.instructions) || undefined,
+    shipments,
+    updatedAt: batch.updated_at || batch.created_at || undefined,
+  };
+}
+
 export function normalizeTasksResponse(raw: AnyRecord): {
   tasks: ShipmentTask[];
+  merchantReturnBatches: MerchantReturnBatch[];
   cashCustody?: number;
   completedToday?: number;
   totalToday?: number;
@@ -540,6 +692,8 @@ export function normalizeTasksResponse(raw: AnyRecord): {
   const payload = raw?.data ?? raw ?? {};
   const collected: ShipmentTask[] = [];
   const seenKeys = new Set<string>();
+  const merchantReturnBatches: MerchantReturnBatch[] = [];
+  const seenMerchantReturnKeys = new Set<string>();
 
   const pushUnique = (task: ShipmentTask) => {
     // Automatically hide shipments/batches once warehouse receives them (status_id = 6)
@@ -622,6 +776,28 @@ export function normalizeTasksResponse(raw: AnyRecord): {
         arr.forEach((item) => pushUnique(normalizeShipment(item, 'returns')));
       }
     });
+    // 6. Explicit merchant return batches (مرتجع للتاجر)
+    const merchantReturnSources = [
+      payload.merchant_return_batches,
+      payload.return_batches,
+      raw?.merchant_return_batches !== payload.merchant_return_batches
+        ? raw?.merchant_return_batches
+        : null,
+      raw?.return_batches !== payload.return_batches ? raw?.return_batches : null,
+    ];
+    merchantReturnSources.forEach((arr) => {
+      if (Array.isArray(arr)) {
+        arr.forEach((item) => {
+          const normalized = normalizeMerchantReturnBatch(item);
+          if (!normalized) return;
+          const key = `${normalized.batchId}-${normalized.batchCode}`;
+          if (!seenMerchantReturnKeys.has(key)) {
+            seenMerchantReturnKeys.add(key);
+            merchantReturnBatches.push(normalized);
+          }
+        });
+      }
+    });
   }
 
   // Merge standalone pickup shipments that belong to an existing pickup batch
@@ -677,6 +853,7 @@ export function normalizeTasksResponse(raw: AnyRecord): {
 
   return {
     tasks: mergedTasks,
+    merchantReturnBatches,
     cashCustody:
       payload.cash_custody !== undefined || payload.total_cod !== undefined
         ? toNumber(payload.cash_custody ?? payload.total_cod, 0)
@@ -749,8 +926,77 @@ export function normalizeCustodyResponse(raw: AnyRecord): CustodySummary {
 
   const totalCash = toNumber(d.total_cod_cash ?? d.cash_custody ?? d.total_cash ?? d.cod_due, 0);
 
+  const rawPayoutBatches: AnyRecord[] = Array.isArray(d.merchant_payout_batches)
+    ? d.merchant_payout_batches
+    : Array.isArray(d.payout_batches)
+      ? d.payout_batches
+      : Array.isArray(d.merchant_payouts)
+        ? d.merchant_payouts
+        : Array.isArray(raw?.merchant_payout_batches)
+          ? raw.merchant_payout_batches
+          : [];
+
+  const merchantPayoutBatches: MerchantPayoutBatch[] = rawPayoutBatches
+    .filter((b) => {
+      const s = String(b.status ?? '').toLowerCase();
+      const sId = toNullableNumber(b.status_id);
+      return (
+        sId !== 8 &&
+        s !== 'delivered' &&
+        s !== 'delivered_to_merchant' &&
+        s !== 'handed_over_to_merchant' &&
+        s !== 'completed'
+      );
+    })
+    .map((b, idx) => {
+      const batchId = String(b.batch_id ?? b.return_batch_id ?? b.id ?? idx + 1);
+      const batchCode = String(
+        b.batch_code ?? b.code ?? b.reference ?? `RB-${batchId}`
+      ).replace(/^#/, '');
+      const amount = Math.max(
+        0,
+        toNumber(
+          b.cash_to_merchant ?? b.amount ?? b.payout_amount ?? b.cash_amount ?? b.cash_due,
+          0
+        )
+      );
+      return {
+        id: String(b.id ?? `mpb-${batchId}`),
+        batchId,
+        batchCode,
+        merchantId:
+          b.merchant_id !== undefined && b.merchant_id !== null
+            ? String(b.merchant_id)
+            : undefined,
+        merchantName: extractMerchantName(b) || 'تاجر',
+        merchantPhone:
+          pickNonEmptyString(b.merchant_phone, b.phone, b.contact_phone) || undefined,
+        amount,
+        shipmentsCount: Math.max(
+          0,
+          toNumber(b.shipments_count ?? b.orders_count ?? b.returns_count ?? b.count, 0)
+        ),
+        status: b.status ? String(b.status) : undefined,
+      };
+    })
+    .filter((b) => b.amount > 0);
+
+  const sumPayoutBatches = merchantPayoutBatches.reduce((sum, b) => sum + b.amount, 0);
+  const explicitPayoutTotal =
+    d.merchant_payout_custody_total ??
+    d.merchant_payout_total ??
+    d.payout_custody_total ??
+    d.cash_to_merchants_total ??
+    raw?.merchant_payout_custody_total;
+  const merchantPayoutCustodyTotal =
+    explicitPayoutTotal !== undefined && explicitPayoutTotal !== null
+      ? Math.max(0, toNumber(explicitPayoutTotal, 0))
+      : sumPayoutBatches;
+
   return {
     totalCodCash: totalCash,
+    merchantPayoutCustodyTotal,
+    merchantPayoutBatches,
     shiftLabelAr: String(d.shift_label ?? DEMO_CUSTODY.shiftLabelAr),
     shiftLabelEn: String(d.shift_label_en ?? DEMO_CUSTODY.shiftLabelEn),
     successfulOrders: toNumber(d.successful_orders ?? d.delivered_count, 0),

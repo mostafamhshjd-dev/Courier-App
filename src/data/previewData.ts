@@ -198,6 +198,8 @@ export const DEMO_TASKS: ShipmentTask[] = [
 
 export const DEMO_CUSTODY: CustodySummary = {
   totalCodCash: 4250,
+  merchantPayoutCustodyTotal: 0,
+  merchantPayoutBatches: [],
   shiftLabelAr: 'وردية الصباح',
   shiftLabelEn: 'Morning Shift',
   successfulOrders: 7,

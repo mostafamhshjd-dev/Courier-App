@@ -276,6 +276,15 @@ export const webstackApi = {
       },
     }),
 
+  deliverMerchantReturnBatch: (payload) =>
+    apiRequest('/courier/return_batch_deliver.php', {
+      method: 'POST',
+      body: {
+        action: 'deliver_return_batch',
+        ...payload,
+      },
+    }),
+
   getCustody: () =>
     apiRequest('/courier/custody.php', {
       method: 'GET',

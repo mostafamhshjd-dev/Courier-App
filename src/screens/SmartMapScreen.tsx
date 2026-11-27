@@ -17,7 +17,13 @@ import {
   User,
   X,
 } from 'lucide-react';
-import { GeoPoint, Language, ShipmentTask, ThemeMode } from '../types/courier';
+import {
+  GeoPoint,
+  Language,
+  MerchantReturnBatch,
+  ShipmentTask,
+  ThemeMode,
+} from '../types/courier';
 import { t } from '../i18n/translations';
 import {
   buildGoogleMapsUrl,
@@ -28,6 +34,7 @@ import {
 
 interface SmartMapScreenProps {
   tasks: ShipmentTask[];
+  merchantReturnBatches?: MerchantReturnBatch[];
   courierLocation: GeoPoint;
   lang: Language;
   theme: ThemeMode;
@@ -68,6 +75,7 @@ function escapeHtml(text: string): string {
 
 export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
   tasks,
+  merchantReturnBatches = [],
   courierLocation,
   lang,
   theme,
@@ -99,12 +107,37 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
   const activeCourierPos = navGpsPoint || courierLocation;
   const isNavigating = navigatingShipmentId !== null;
 
-  // 1. Filter delivery shipments & active merchant pickups with valid coordinates, sorted ascending by Haversine distance
+  // 1. Filter delivery shipments, active merchant pickups, and merchant return batches with valid coordinates
   const rankedShipments = useMemo(() => {
-    return tasks
+    const returnTargets: ShipmentTask[] = merchantReturnBatches.map((batch) => ({
+      id: batch.id,
+      trackingNumber: batch.batchCode,
+      category: 'merchant_returns',
+      status: batch.status,
+      statusId: batch.statusId,
+      isPickupBatch: true,
+      batchId: batch.batchId,
+      batchCode: batch.batchCode,
+      shipmentsCount: batch.shipmentsCount,
+      customerName: batch.merchantName,
+      customerPhone: batch.merchantPhone,
+      address: batch.address,
+      district: '',
+      lat: batch.lat,
+      lng: batch.lng,
+      codAmount: batch.cashToMerchant,
+      isPrepaid: batch.cashToMerchant <= 0,
+      merchantName: batch.merchantName,
+      itemsSummary: `${batch.shipmentsCount}`,
+      itemsCount: batch.totalPieces,
+    }));
+
+    return [...tasks, ...returnTargets]
       .filter(
         (item) =>
-          (item.category === 'delivery' || item.category === 'pickup') &&
+          (item.category === 'delivery' ||
+            item.category === 'pickup' ||
+            item.category === 'merchant_returns') &&
           item.status !== 'delivered' &&
           item.statusId !== 8 &&
           item.statusId !== 6 &&
@@ -127,9 +160,9 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
         ...entry,
         rank: idx + 1,
       }));
-  }, [tasks, activeCourierPos.lat, activeCourierPos.lng]);
+  }, [tasks, merchantReturnBatches, activeCourierPos.lat, activeCourierPos.lng]);
 
-  // Honor external focus request (e.g., tapping "فتح اللوكيشن على الخريطة" from a Pickup Batch)
+  // Honor external focus request (e.g., tapping "فتح اللوكيشن على الخريطة" from Pickup or Merchant Return Batch)
   useEffect(() => {
     if (!focusedTaskId) return;
     const target = rankedShipments.find((r) => r.shipment.id === focusedTaskId);
@@ -142,7 +175,11 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
         });
         window.setTimeout(() => {
           const marker = shipmentMarkersRef.current.get(target.shipment.id);
-          if (marker && target.shipment.category === 'pickup') {
+          if (
+            marker &&
+            (target.shipment.category === 'pickup' ||
+              target.shipment.category === 'merchant_returns')
+          ) {
             marker.openPopup();
           }
         }, 450);
@@ -421,17 +458,19 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
 
     visibleEntries.forEach(({ shipment, rank, distanceKm }) => {
       const isSelected = selectedEntry?.shipment.id === shipment.id;
+      const isMerchantPin =
+        shipment.category === 'pickup' || shipment.category === 'merchant_returns';
       const isPickup = shipment.category === 'pickup';
       const distText = formatDistance(distanceKm, lang);
       const pickupCount =
         shipment.shipmentsCount ?? shipment.batchShipments?.length ?? shipment.itemsCount ?? 1;
-      const codTag = isPickup
+      const codTag = isMerchantPin
         ? `${pickupCount} ${t(lang, 'shipmentUnit')}`
         : shipment.codAmount > 0 && !shipment.isPrepaid
           ? `${shipment.codAmount} ${t(lang, 'currency')}`
           : t(lang, 'prepaid');
 
-      const pinHtml = isPickup
+      const pinHtml = isMerchantPin
         ? `
           <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-86%);">
             <div style="position:relative;display:flex;align-items:center;justify-content:center;">
@@ -488,15 +527,18 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
 
       const marker = L.marker([shipment.lat as number, shipment.lng as number], {
         icon,
-        zIndexOffset: isSelected ? 700 : isPickup ? 450 : 300 - rank,
+        zIndexOffset: isSelected ? 700 : isMerchantPin ? 450 : 300 - rank,
       }).addTo(map);
 
-      if (isPickup) {
+      if (isMerchantPin) {
         const googleMapsHref = buildGoogleMapsUrl(shipment.lat, shipment.lng, shipment.address);
+        const pinRoleLabel = isPickup
+          ? t(lang, 'merchantPinLabel')
+          : t(lang, 'merchantReturnPinLabel');
         const popupHtml = `
           <div dir="${lang === 'ar' ? 'rtl' : 'ltr'}" style="min-width:210px;font-family:Cairo,system-ui,sans-serif;color:#0F172A;padding:2px 0;">
             <div style="font-size:11px;font-weight:700;color:#D97706;margin-bottom:2px;">
-              ${escapeHtml(t(lang, 'merchantPinLabel'))} • ${pickupCount} ${escapeHtml(t(lang, 'shipmentUnit'))}
+              ${escapeHtml(pinRoleLabel)} • ${pickupCount} ${escapeHtml(t(lang, 'shipmentUnit'))}
             </div>
             <div style="font-size:14px;font-weight:800;margin-bottom:4px;">
               ${escapeHtml(shipment.merchantName || shipment.customerName)}
@@ -518,7 +560,7 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
         if (isNavigating) return;
         setSelectionMode('manual');
         setManualShipmentId(shipment.id);
-        if (isPickup) {
+        if (isMerchantPin) {
           marker.openPopup();
         }
       });
@@ -897,13 +939,15 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
             <div className="flex items-start justify-between gap-3 py-3">
               <div className="flex flex-col min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
-                  {selectedEntry.shipment.category === 'pickup' ? (
+                  {selectedEntry.shipment.category === 'pickup' ||
+                  selectedEntry.shipment.category === 'merchant_returns' ? (
                     <Store className="w-4 h-4 text-secondary shrink-0" />
                   ) : (
                     <User className="w-4 h-4 text-primary shrink-0" />
                   )}
                   <h2 className="font-display text-base font-bold text-on-surface truncate">
-                    {selectedEntry.shipment.category === 'pickup'
+                    {selectedEntry.shipment.category === 'pickup' ||
+                    selectedEntry.shipment.category === 'merchant_returns'
                       ? selectedEntry.shipment.merchantName || selectedEntry.shipment.customerName
                       : selectedEntry.shipment.customerName}
                   </h2>
@@ -914,10 +958,13 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
                 </p>
               </div>
 
-              {selectedEntry.shipment.category === 'pickup' ? (
+              {selectedEntry.shipment.category === 'pickup' ||
+              selectedEntry.shipment.category === 'merchant_returns' ? (
                 <div className="flex flex-col items-end shrink-0 bg-secondary/15 border border-secondary/35 px-3 py-1.5 rounded-xl">
                   <span className="text-[10px] font-bold text-secondary">
-                    {t(lang, 'merchantPinLabel')}
+                    {selectedEntry.shipment.category === 'pickup'
+                      ? t(lang, 'merchantPinLabel')
+                      : t(lang, 'merchantReturnPinLabel')}
                   </span>
                   <div className="flex items-baseline gap-1 mt-0.5">
                     <span className="font-telemetry text-lg font-extrabold text-secondary leading-none tabular-nums">
@@ -957,7 +1004,8 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
             </div>
 
             {/* Action Buttons: Responsive layout preventing clipping on mobile screens */}
-            {selectedEntry.shipment.category === 'pickup' ? (
+            {selectedEntry.shipment.category === 'pickup' ||
+            selectedEntry.shipment.category === 'merchant_returns' ? (
               <div className="flex flex-col gap-2 pt-0.5 w-full">
                 <div className="flex items-center gap-2 w-full">
                   <a
@@ -983,14 +1031,16 @@ export const SmartMapScreen: React.FC<SmartMapScreenProps> = ({
                   </a>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => onOpenShipmentDetails(selectedEntry.shipment)}
-                  className="w-full min-h-[44px] px-3 rounded-xl bg-surface-container-low hover:bg-surface-bright border border-outline-variant/35 text-on-surface text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition cursor-pointer"
-                >
-                  <Package className="w-4 h-4 text-secondary shrink-0" />
-                  <span className="truncate">{t(lang, 'reviewAndReceiveBatch')}</span>
-                </button>
+                {selectedEntry.shipment.category === 'pickup' && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenShipmentDetails(selectedEntry.shipment)}
+                    className="w-full min-h-[44px] px-3 rounded-xl bg-surface-container-low hover:bg-surface-bright border border-outline-variant/35 text-on-surface text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition cursor-pointer"
+                  >
+                    <Package className="w-4 h-4 text-secondary shrink-0" />
+                    <span className="truncate">{t(lang, 'reviewAndReceiveBatch')}</span>
+                  </button>
+                )}
               </div>
             ) : (
               <div className="flex items-center gap-2 pt-0.5 w-full">
